@@ -429,7 +429,11 @@ function main()
                 local state_changed = false
                 if msg.type == "DISCOVER" then
                     net.send(id, "DISCOVER_ACK", { id = os.getComputerID() })
-                    dispatcher.autoAssignBuffers(id)
+                    if msg.data.input_chest and msg.data.output_chest then
+                        dispatcher.assignWorkerBuffers(id, msg.data.input_chest, msg.data.output_chest)
+                    else
+                        dispatcher.autoAssignBuffers(id)
+                    end
                     state_changed = true
                 elseif msg.type == "RESULT" then
                     local tid = msg.data and msg.data.task_id
@@ -447,6 +451,13 @@ function main()
                     if dispatcher.workers[id].status ~= msg.data.status then
                         dispatcher.workers[id].status = msg.data.status
                         state_changed = true
+                    end
+                    if msg.data.input_chest and msg.data.output_chest then
+                        local w = dispatcher.workers[id]
+                        if not w.buffers or w.buffers.input ~= msg.data.input_chest or w.buffers.output ~= msg.data.output_chest then
+                            dispatcher.assignWorkerBuffers(id, msg.data.input_chest, msg.data.output_chest)
+                            state_changed = true
+                        end
                     end
                 end
                 if state_changed and monName then ui.draw(monName) end

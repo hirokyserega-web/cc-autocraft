@@ -87,6 +87,24 @@ function dispatcher.validateBuffers()
     end
 end
 
+-- Assign specific input/output chests as this worker's buffers.
+function dispatcher.assignWorkerBuffers(workerId, in_chest, out_chest)
+    if not dispatcher.workers[workerId] then
+        dispatcher.workers[workerId] = { status = "IDLE" }
+    end
+    if in_chest and out_chest then
+        dispatcher.workers[workerId].buffers = {
+            input = in_chest,
+            output = out_chest
+        }
+        util.log("Assigned buffers to worker " .. workerId .. " via worker reporting: IN=" .. in_chest .. " OUT=" .. out_chest)
+        dispatcher.updateStorageBuffers()
+        dispatcher.save()
+        return true
+    end
+    return false
+end
+
 -- Auto-assign two free inventory chests as this worker's input/output buffers.
 function dispatcher.autoAssignBuffers(workerId)
     if not dispatcher.workers[workerId] then

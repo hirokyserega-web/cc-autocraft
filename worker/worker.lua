@@ -48,6 +48,13 @@ local function get_adjacent_chests()
     return input_chest, input_side, output_chest, output_side
 end
 
+local function get_adjacent_chest_names()
+    local input, _, output, _ = get_adjacent_chests()
+    local in_name = input and peripheral.getName(input) or nil
+    local out_name = output and peripheral.getName(output) or nil
+    return in_name, out_name
+end
+
 local function push_all_to_output(output, turtle_name)
     if not output then return end
     for slot = 1, 16 do
@@ -66,7 +73,12 @@ function worker.loop()
     while true do
         if not worker.core_id then
             print("Seeking Core...")
-            net.broadcast("DISCOVER", { id = worker.id })
+            local in_name, out_name = get_adjacent_chest_names()
+            net.broadcast("DISCOVER", {
+                id = worker.id,
+                input_chest = in_name,
+                output_chest = out_name
+            })
         end
 
         local id, type, data = net.receive(3)
@@ -128,7 +140,12 @@ function worker.loop()
         end
 
         if worker.core_id then
-            net.send(worker.core_id, "HEARTBEAT", { status = worker.status })
+            local in_name, out_name = get_adjacent_chest_names()
+            net.send(worker.core_id, "HEARTBEAT", {
+                status = worker.status,
+                input_chest = in_name,
+                output_chest = out_name
+            })
         end
         os.sleep(0.5)
     end
