@@ -98,6 +98,17 @@ function worker.loop()
             local input, input_side, output, output_side = get_adjacent_chests()
             if not input or not output then
                 print("Error: need 2 adjacent chests (IN and OUT)")
+                print("Current adjacent peripherals:")
+                for _, s in ipairs({ "down", "up", "front", "back", "left", "right" }) do
+                    if peripheral.isPresent(s) then
+                        local ptype = peripheral.getType(s) or "unknown"
+                        local p = peripheral.wrap(s)
+                        local isInv = p and type(p.list) == "function" and type(p.size) == "function"
+                        print(string.format(" %-5s: %s (%s)", s, ptype:sub(1,10), isInv and "INV" or "NOT-INV"))
+                    else
+                        print(" " .. s .. ": empty")
+                    end
+                end
                 if worker.core_id then
                     net.send(worker.core_id, "RESULT", {
                         task_id = data.id,
