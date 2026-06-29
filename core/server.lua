@@ -413,6 +413,7 @@ function main()
             end
             _G.NETWORK_INVENTORIES = util.getInventories()
             dispatcher.processQueue()
+            if monName then ui.draw(monName) end
             -- Yield at the end of a heavy tick so a fully-loaded storage
             -- network (many chests * many slots) cannot trip the
             -- "Too long without yielding" watchdog.
@@ -422,9 +423,11 @@ function main()
         elseif event == "rednet_message" then
             local id, msg = p1, p2
             if type(msg) == "table" and msg.protocol == net.PROTOCOL then
+                local state_changed = false
                 if msg.type == "DISCOVER" then
                     net.send(id, "DISCOVER_ACK", { id = os.getComputerID() })
                     dispatcher.autoAssignBuffers(id)
+                    state_changed = true
                 elseif msg.type == "RESULT" then
                     local tid = msg.data and msg.data.task_id
                     if type(tid) == "string" and tid:sub(1, 5) == "test_" then
@@ -432,20 +435,28 @@ function main()
                     else
                         dispatcher.handleResult(id, tid, msg.data.success, msg.data.error)
                     end
+                    state_changed = true
                 elseif msg.type == "HEARTBEAT" then
-                    if not dispatcher.workers[id] then dispatcher.workers[id] = { status = "IDLE" } end
-                    dispatcher.workers[id].status = msg.data.status
-                    dispatcher.autoAssignBuffers(id)
+                    if not dispatcher.workers[id] then 
+                        dispatcher.workers[id] = { status = "IDLE" } 
+                        state_changed = true
+                    end
+                    if dispatcher.workers[id].status ~= msg.data.status then
+                        dispatcher.workers[id].status = msg.data.status
+                        state_changed = true
+                    end
                 end
+                if state_changed and monName then ui.draw(monName) end
             end
 
         elseif event == "monitor_touch" then
             local _, x, y = p1, p2, p3
             local bid = ui.touch(x, y)
-            if bid then handleButton(bid) end
+            if bid then 
+                handleButton(bid) 
+                if monName then ui.draw(monName) end
+            end
         end
-
-        if monName then ui.draw(monName) end
 
         -- Cheap housekeeping yield: lets the VM run other coroutines and
         -- prevents "Too long without yielding" when several handlers ran in a
