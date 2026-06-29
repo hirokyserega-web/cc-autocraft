@@ -521,10 +521,14 @@ function main()
 
         elseif event == "monitor_touch" then
             local _, x, y = p1, p2, p3
+            print("[TOUCH] Clicked at x=" .. tostring(x) .. ", y=" .. tostring(y))
             local bid = ui.touch(x, y)
-            if bid then 
-                handleButton(bid) 
+            if bid then
+                print("[TOUCH] Matched button: " .. tostring(bid))
+                handleButton(bid)
                 if monName then ui.draw(monName) end
+            else
+                print("[TOUCH] No button matched.")
             end
         end
 
