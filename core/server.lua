@@ -339,13 +339,13 @@ local function handleButton(btn_id)
     end
 
     -- Manual worker buffer setting modal triggers
-    if btn_id:sub(1, 18) == "SET_BUFIN_SELECT:" then
-        local chest = btn_id:sub(19)
+    if btn_id:sub(1, 17) == "SET_BUFIN_SELECT:" then
+        local chest = btn_id:sub(18)
         ui.modal = { type = "SELECT_WORKER", mode = "IN", chest = chest }
         return
     end
-    if btn_id:sub(1, 19) == "SET_BUFOUT_SELECT:" then
-        local chest = btn_id:sub(20)
+    if btn_id:sub(1, 18) == "SET_BUFOUT_SELECT:" then
+        local chest = btn_id:sub(19)
         ui.modal = { type = "SELECT_WORKER", mode = "OUT", chest = chest }
         return
     end
