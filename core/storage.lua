@@ -5,9 +5,7 @@ local util = require("lib.util")
 storage.cache = {} -- { [name] = count }
 storage.reserved = {} -- { [name] = count }
 storage.peripherals = {} -- names of inventory peripherals
-
--- Central 3x3 Grid slots in a 9x3 chest
-local GRID_SLOTS = {4, 5, 6, 13, 14, 15, 22, 23, 24}
+storage.buffers = {} -- { [bufferName] = true } (populated by dispatcher)
 
 function storage.refresh()
     storage.cache = {}
@@ -15,15 +13,19 @@ function storage.refresh()
     local names = peripheral.getNames()
     for _, name in ipairs(names) do
         if peripheral.getType(name) == "inventory" or peripheral.hasType(name, "inventory") then
-            table.insert(storage.peripherals, name)
-            local p = peripheral.wrap(name)
-            local items = p.list()
-            
-            -- User requested ONLY central grid slots to be scanned
-            for _, slot in ipairs(GRID_SLOTS) do
-                local item = items[slot]
-                if item then
-                    storage.cache[item.name] = (storage.cache[item.name] or 0) + item.count
+            -- Skip active recipe grid and buffer chests
+            if name ~= _G.GRID_NAME and not storage.buffers[name] then
+                table.insert(storage.peripherals, name)
+                local p = peripheral.wrap(name)
+                if p then
+                    local items = p.list()
+                    local size = p.size() or 27
+                    for slot = 1, size do
+                        local item = items[slot]
+                        if item then
+                            storage.cache[item.name] = (storage.cache[item.name] or 0) + item.count
+                        end
+                    end
                 end
             end
         end
@@ -51,22 +53,23 @@ function storage.release(name, count)
     end
 end
 
--- Push items to a specific destination
+-- Extract item from storage to a specific peripheral and slot
 function storage.extract(itemName, count, toPeripheral, toSlot)
     local remaining = count
     for _, pName in ipairs(storage.peripherals) do
-        if pName ~= toPeripheral then
+        if pName ~= toPeripheral and pName ~= _G.GRID_NAME and not storage.buffers[pName] then
             local p = peripheral.wrap(pName)
-            local items = p.list()
-            
-            -- Only extract from GRID slots
-            for _, slot in ipairs(GRID_SLOTS) do
-                local item = items[slot]
-                if item and item.name == itemName then
-                    local moveCount = math.min(remaining, item.count)
-                    local moved = p.pushItems(toPeripheral, slot, moveCount, toSlot)
-                    remaining = remaining - moved
-                    if remaining <= 0 then break end
+            if p then
+                local items = p.list()
+                local size = p.size() or 27
+                for slot = 1, size do
+                    local item = items[slot]
+                    if item and item.name == itemName then
+                        local moveCount = math.min(remaining, item.count)
+                        local moved = p.pushItems(toPeripheral, slot, moveCount, toSlot)
+                        remaining = remaining - moved
+                        if remaining <= 0 then break end
+                    end
                 end
             end
         end
@@ -75,19 +78,19 @@ function storage.extract(itemName, count, toPeripheral, toSlot)
     return count - remaining
 end
 
--- Pull items from a peripheral back to storage
+-- Pull items from a peripheral slot back into general storage
 function storage.deposit(fromPeripheral, fromSlot, count)
     local remaining = count
     for _, pName in ipairs(storage.peripherals) do
-        if pName ~= fromPeripheral then
+        if pName ~= fromPeripheral and pName ~= _G.GRID_NAME and not storage.buffers[pName] then
             local p = peripheral.wrap(pName)
-            
-            -- Deposit only into empty GRID slots
-            local items = p.list()
-            for _, slot in ipairs(GRID_SLOTS) do
-                local moved = p.pullItems(fromPeripheral, fromSlot, remaining, slot)
-                remaining = remaining - moved
-                if remaining <= 0 then break end
+            if p then
+                local size = p.size() or 27
+                for slot = 1, size do
+                    local moved = p.pullItems(fromPeripheral, fromSlot, remaining, slot)
+                    remaining = remaining - moved
+                    if remaining <= 0 then break end
+                end
             end
         end
         if remaining <= 0 then break end

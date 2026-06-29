@@ -33,14 +33,31 @@ function recipes.get_from_grid(pName)
         end
     end
     
+    if #ingredients == 0 then return nil, "Сетка пуста! Выложите крафт в слоты 4,5,6, 13,14,15, 22,23,24" end
+    
     local outDetail = p.getItemDetail(OUTPUT_SLOT)
-    if not outDetail then return nil, "Put the result item in slot " .. OUTPUT_SLOT end
-    if #ingredients == 0 then return nil, "Grid is empty (slots 4,5,6,13,14,15,22,23,24)" end
+    local output = nil
+    if outDetail then
+        output = {name = outDetail.name, count = outDetail.count}
+    end
     
     return {
-        output = {name = outDetail.name, count = outDetail.count},
+        output = output,
         ingredients = ingredients
     }
+end
+
+function recipes.get(itemName)
+    local r = recipes.data[itemName]
+    if r then
+        return {
+            {
+                ingredients = r.ingredients,
+                output_count = r.output_count or 1
+            }
+        }
+    end
+    return nil
 end
 
 function recipes.add(output_name, ingredients, count)
