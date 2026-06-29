@@ -14,9 +14,8 @@ function storage.refresh()
     local _op = 0  -- yields
     storage.peripherals = {}
     local names = peripheral.getNames()
-    local _op = 0
     for _, name in ipairs(names) do
-        _op = _op + 1; util.maybeYield(_op, 8)
+        _op = _op + 1; util.maybeYield(_op, 4)
         if util.isInventory(name) then
             -- Skip the active recipe grid and worker buffer chests
             if name ~= _G.GRID_NAME and not storage.buffers[name] then
@@ -33,6 +32,7 @@ function storage.refresh()
                     end
                 end
             end
+            os.sleep(0) -- Yield after listing each inventory to avoid yielding errors
         end
     end
 end
@@ -71,12 +71,13 @@ function storage.extract(itemName, count, toPeripheral, toSlot)
                 local items = p.list()
                 local size = p.size() or 27
                 for slot = 1, size do
-                    _op = _op + 1; util.maybeYield(_op, 16)
+                    _op = _op + 1; util.maybeYield(_op, 8)
                     local item = items[slot]
                     if item and item.name == itemName then
                         local moveCount = math.min(remaining, item.count)
                         local moved = p.pushItems(toPeripheral, slot, moveCount, toSlot)
                         remaining = remaining - (moved or 0)
+                        os.sleep(0) -- Yield after pushing items to prevent yielding errors
                         if remaining <= 0 then break end
                     end
                 end
@@ -107,7 +108,7 @@ function storage.deposit(fromPeripheral, fromSlot, count)
                 local size = p.size() or 27
                 local items = p.list()
                 for slot = 1, size do
-                    _op = _op + 1; util.maybeYield(_op, 16)
+                    _op = _op + 1; util.maybeYield(_op, 8)
                     local existing = items[slot]
                     -- pullItems stacks same items and moves into empty slots;
                     -- it returns 0 for slots holding a different item, so we
@@ -115,6 +116,7 @@ function storage.deposit(fromPeripheral, fromSlot, count)
                     if not existing or existing.name == srcName then
                         local moved = p.pullItems(fromPeripheral, fromSlot, remaining, slot)
                         remaining = remaining - (moved or 0)
+                        os.sleep(0) -- Yield after pulling items to prevent yielding errors
                         if remaining <= 0 then break end
                     end
                 end

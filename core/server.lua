@@ -179,6 +179,12 @@ local function trigger_test_craft()
 
     storage.refresh()
 
+    local worker_id, worker = dispatcher.getReadyWorker()
+    if not worker_id then
+        ui.modal = { type = "RECIPE_FAILED", error = "No IDLE workers with valid buffers available." }
+        return
+    end
+
     -- Clear the scanner's output slot (16) into storage so a new result can land there.
     local scanner = peripheral.wrap(_G.GRID_NAME)
     if scanner then

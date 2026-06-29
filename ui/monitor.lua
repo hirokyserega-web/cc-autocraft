@@ -18,19 +18,19 @@ local ui = {
 -- Theme
 local C = {
     bg       = colors.black,
-    header   = colors.gray,
-    tab_on   = colors.blue,
-    tab_off  = colors.lightGray,
+    header   = colors.purple,     -- Sleek royal purple header
+    tab_on   = colors.magenta,    -- Bright magenta active tab
+    tab_off  = colors.gray,       -- Darker gray for inactive tabs
     panel    = colors.black,
-    border   = colors.gray,
-    title    = colors.cyan,
+    border   = colors.purple,     -- Purple accented borders
+    title    = colors.cyan,       -- Cyan titles for high visibility
     text     = colors.white,
     muted    = colors.lightGray,
-    ok       = colors.green,
-    warn     = colors.yellow,
-    bad      = colors.red,
-    active   = colors.orange,
-    accent   = colors.purple
+    ok       = colors.lime,       -- Lime for success / positive states
+    warn     = colors.orange,     -- Orange for warning / progress states
+    bad      = colors.red,        -- Red for errors
+    active   = colors.cyan,
+    accent   = colors.magenta
 }
 
 ----------------------------------------------------------------------
@@ -123,7 +123,7 @@ end
 ----------------------------------------------------------------------
 local function drawHeader(mon, w)
     fill(mon, 1, 1, w, 3, C.header)
-    textAt(mon, 2, 2, "CC-AUTOCRAFT 2.0", C.title, C.header)
+    textAt(mon, 2, 2, "CC-AUTOCRAFT 3.0", colors.white, C.header)
 
     local tabs = {
         { id = "DASH",    text = "HOME" },
@@ -137,8 +137,10 @@ local function drawHeader(mon, w)
     local startX = w - totalW - 1
     for i, t in ipairs(tabs) do
         local x = startX + (i - 1) * (tw + gap)
+        local isActive = (ui.tab == t.id)
         btn(mon, x, 2, tw, t.text, "TAB:" .. t.id,
-            ui.tab == t.id and C.tab_on or C.tab_off, colors.black)
+            isActive and C.tab_on or C.tab_off,
+            isActive and colors.white or colors.lightGray)
     end
 end
 
@@ -175,17 +177,18 @@ local function drawDash(mon, w, h)
     local anyWorker = false
     for id, info in pairs(dispatcher.workers) do
         anyWorker = true
-        local statusText, color
+        local badgeText, badgeColor
         if info.status == "IDLE" then
-            statusText, color = "IDLE", C.ok
+            badgeText, badgeColor = " IDLE ", C.ok
         elseif info.status == "CRAFTING" then
-            statusText, color = "CRAFTING", C.active
+            badgeText, badgeColor = " CRAFT ", C.active
         elseif info.status == "TESTING" then
-            statusText, color = "TEST", C.warn
+            badgeText, badgeColor = " TEST  ", C.warn
         else
-            statusText, color = tostring(info.status), C.bad
+            badgeText, badgeColor = " ERR   ", C.bad
         end
-        textAt(mon, leftX + 1, y, string.format("#%-3d [%s]", id, statusText), color, C.panel)
+        textAt(mon, leftX + 1, y, string.format("#%-3d:", id), C.text, C.panel)
+        textAt(mon, leftX + 10, y, badgeText, colors.black, badgeColor)
         y = y + 1
         if y > h - 2 then break end
     end
@@ -205,19 +208,22 @@ local function drawDash(mon, w, h)
         y = 8
         for i = #dispatcher.queue, 1, -1 do
             local t = dispatcher.queue[i]
-            local mark, stext, color
+            local badgeText, bgCol, fgCol
             if t.status == "COMPLETED" then
-                mark, stext, color = "+", "OK", C.muted
+                badgeText, bgCol, fgCol = " DONE ", colors.gray, colors.white
             elseif t.status == "FAILED" then
-                mark, stext, color = "!", "ERROR", C.bad
+                badgeText, bgCol, fgCol = " FAIL ", colors.red, colors.white
             elseif t.status == "ACTIVE" then
-                mark, stext, color = ">", "ACTIVE", C.active
+                badgeText, bgCol, fgCol = " WORK ", colors.cyan, colors.black
             else
-                mark, stext, color = "-", "PENDING", C.text
+                badgeText, bgCol, fgCol = " WAIT ", colors.lightGray, colors.black
             end
-            textAt(mon, rightX + 1, y,
-                string.format("[%s] %-16s x%d %s", mark, shortName(t.name, 16), t.count, stext),
-                color, C.panel)
+            
+            -- Print task info
+            local nameStr = string.format("%-11s x%d", shortName(t.name, 11), t.count)
+            textAt(mon, rightX + 1, y, nameStr, C.text, C.panel)
+            -- Print badge at the right side of the row
+            textAt(mon, w - 8, y, badgeText, fgCol, bgCol)
             y = y + 1
             if y > h - 2 then break end
         end
@@ -268,6 +274,30 @@ end
 ----------------------------------------------------------------------
 -- Tab: Recipes
 ----------------------------------------------------------------------
+local function drawSlot(mon, x, y, item)
+    if item then
+        local name = shortName(item.name, 3):upper()
+        if #name == 1 then name = " " .. name .. " "
+        elseif #name == 2 then name = " " .. name
+        end
+        textAt(mon, x, y, name, colors.white, colors.gray)
+    else
+        textAt(mon, x, y, "   ", colors.lightGray, colors.gray)
+    end
+end
+
+local function drawOutputSlot(mon, x, y, itemName)
+    if itemName then
+        local name = shortName(itemName, 3):upper()
+        if #name == 1 then name = " " .. name .. " "
+        elseif #name == 2 then name = " " .. name
+        end
+        textAt(mon, x, y, name, colors.black, colors.orange)
+    else
+        textAt(mon, x, y, " ? ", colors.gray, colors.lightGray)
+    end
+end
+
 local function drawGridPreview(mon, x, y)
     local list = {}
     local outItem = nil
@@ -290,13 +320,11 @@ local function drawGridPreview(mon, x, y)
     for _, c in ipairs(cells) do
         local slot, dx, dy = c[1], c[2], c[3]
         local item = list[slot]
-        textAt(mon, x + dx, y + dy, item and ("[" .. shortName(item.name, 2):upper() .. "]") or "[  ]",
-            C.text, C.panel)
+        drawSlot(mon, x + dx, y + dy, item)
     end
 
-    textAt(mon, x + 12, y + 2, "=>", C.muted, C.panel)
-    textAt(mon, x + 15, y + 2, outItem and ("[" .. shortName(outItem, 3):upper() .. "]") or "[ ? ]",
-        C.warn, C.panel)
+    textAt(mon, x + 12, y + 2, "->", C.accent, C.panel)
+    drawOutputSlot(mon, x + 15, y + 2, outItem)
 end
 
 local function drawRecipe(mon, w, h)
@@ -316,7 +344,7 @@ local function drawRecipe(mon, w, h)
     textAt(mon, 3, 8, "Scanner: " .. shortName(_G.GRID_NAME, 20), C.muted, C.panel)
     drawGridPreview(mon, 4, 10)
     textAt(mon, 4, 16, "Place craft in center", C.muted, C.panel)
-    textAt(mon, 4, 17, "of chest (slots 4-6/13-15/22-24)", C.muted, C.panel)
+    textAt(mon, 4, 17, "slots 4-6 / 13-15 / 22-24", C.muted, C.panel)
 
     local testLabel = _G.active_test and "TESTING..." or "TEST CRAFT"
     btn(mon, 3, 19, leftW - 2, testLabel, "TEST_CRAFT",

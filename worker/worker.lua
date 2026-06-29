@@ -48,11 +48,11 @@ local function get_adjacent_chests()
     return input_chest, input_side, output_chest, output_side
 end
 
-local function push_all_to_output(output, opp_output)
+local function push_all_to_output(output, turtle_name)
     if not output then return end
     for slot = 1, 16 do
         if turtle.getItemCount(slot) > 0 then
-            output.pullItems(opp_output, slot, 64)
+            output.pullItems(turtle_name, slot, 64)
         end
     end
 end
@@ -94,17 +94,17 @@ function worker.loop()
                     })
                 end
             else
-                local opp_input = opposite_side(input_side)
-                local opp_output = opposite_side(output_side)
+                local turtle_name = peripheral.getNameLocal() or opposite_side(input_side)
+                local target_output_name = peripheral.getNameLocal() or opposite_side(output_side)
 
                 -- 1. Clear turtle inventory into the output chest.
-                push_all_to_output(output, opp_output)
+                push_all_to_output(output, target_output_name)
 
                 -- 2. Pull ingredients from the input chest's central 3x3 into
                 --    the turtle's craft grid, `batches` items per cell.
                 local batches = data.batches or 1
                 for chest_slot, turtle_slot in pairs(slot_map) do
-                    input.pushItems(opp_input, chest_slot, batches, turtle_slot)
+                    input.pushItems(turtle_name, chest_slot, batches, turtle_slot)
                 end
 
                 -- 3. Craft.
@@ -112,7 +112,7 @@ function worker.loop()
                 local success, err = turtle.craft()
 
                 -- 4. Push everything (result + leftovers) to the output chest.
-                push_all_to_output(output, opp_output)
+                push_all_to_output(output, target_output_name)
 
                 print("Finish: success=" .. tostring(success) .. (err and (", err=" .. err) or ""))
                 if worker.core_id then
