@@ -299,16 +299,8 @@ local function drawOutputSlot(mon, x, y, itemName)
 end
 
 local function drawGridPreview(mon, x, y)
-    local list = {}
-    local outItem = nil
-    if _G.GRID_NAME then
-        local p = peripheral.wrap(_G.GRID_NAME)
-        if p then
-            list = p.list() or {}
-            local od = p.getItemDetail(recipes.OUTPUT_SLOT)
-            if od then outItem = od.name end
-        end
-    end
+    local list = _G.GRID_ITEMS or {}
+    local outItem = _G.GRID_OUTPUT
 
     -- positions of the 3x3 grid relative to (x,y)
     local cells = {
@@ -389,7 +381,7 @@ local function drawConf(mon, w, h)
     btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
 
-    local invs = util.getInventories()
+    local invs = _G.NETWORK_INVENTORIES or {}
     table.sort(invs)
 
     local maxRows = math.floor((h - 10) / 1)

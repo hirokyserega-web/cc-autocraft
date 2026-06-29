@@ -153,6 +153,10 @@ local function handle_test_result(workerId, success, err)
         end
     end
 
+    _G.GRID_ITEMS = scanner.list() or {}
+    local od = scanner.getItemDetail(recipes.OUTPUT_SLOT)
+    _G.GRID_OUTPUT = od and od.name or nil
+
     worker.status = "IDLE"
     _G.active_test = nil
 end
@@ -341,6 +345,15 @@ local function handleButton(btn_id)
         _G.GRID_NAME = name
         saveScanner()
         util.log("Scanner chest set to: " .. name)
+        local p = peripheral.wrap(name)
+        if p then
+            _G.GRID_ITEMS = p.list() or {}
+            local od = p.getItemDetail(recipes.OUTPUT_SLOT)
+            _G.GRID_OUTPUT = od and od.name or nil
+        else
+            _G.GRID_ITEMS = {}
+            _G.GRID_OUTPUT = nil
+        end
         return
     end
 end
@@ -365,6 +378,17 @@ function main()
     if not monName then print("Warning: monitor not found!") end
 
     storage.refresh()
+    _G.GRID_ITEMS = {}
+    _G.GRID_OUTPUT = nil
+    _G.NETWORK_INVENTORIES = util.getInventories()
+    if _G.GRID_NAME then
+        local p = peripheral.wrap(_G.GRID_NAME)
+        if p then
+            _G.GRID_ITEMS = p.list() or {}
+            local od = p.getItemDetail(recipes.OUTPUT_SLOT)
+            _G.GRID_OUTPUT = od and od.name or nil
+        end
+    end
     local tick = os.startTimer(0.5)
 
     while true do
@@ -372,7 +396,22 @@ function main()
 
         if event == "timer" and p1 == tick then
             storage.refresh()
-            if _G.GRID_NAME then recipes.arrange_grid(_G.GRID_NAME) end
+            if _G.GRID_NAME then
+                recipes.arrange_grid(_G.GRID_NAME)
+                local p = peripheral.wrap(_G.GRID_NAME)
+                if p then
+                    _G.GRID_ITEMS = p.list() or {}
+                    local od = p.getItemDetail(recipes.OUTPUT_SLOT)
+                    _G.GRID_OUTPUT = od and od.name or nil
+                else
+                    _G.GRID_ITEMS = {}
+                    _G.GRID_OUTPUT = nil
+                end
+            else
+                _G.GRID_ITEMS = {}
+                _G.GRID_OUTPUT = nil
+            end
+            _G.NETWORK_INVENTORIES = util.getInventories()
             dispatcher.processQueue()
             -- Yield at the end of a heavy tick so a fully-loaded storage
             -- network (many chests * many slots) cannot trip the
