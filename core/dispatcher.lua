@@ -214,6 +214,8 @@ function dispatcher.processQueue()
                 count = pending_task.count,
                 batches = pending_task.batches
             })
+        else
+            break
         end
 
         workerId, worker = dispatcher.getReadyWorker()

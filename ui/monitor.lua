@@ -243,30 +243,33 @@ local function drawStorage(mon, w, h)
     btn(mon, w - 7, 6, 6, "/\\ UP", "SUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "SDN", C.tab_off, colors.black)
 
+    textAt(mon, 4, 8, "Action   Item Name                      Qty", C.title, C.panel)
+    textAt(mon, 3, 9, string.rep("-", w - 14), C.border, C.panel)
+
     local items = {}
     for name, qty in pairs(storage.cache) do
         table.insert(items, { name = name, qty = qty })
     end
     table.sort(items, function(a, b) return a.name < b.name end)
 
-    local maxRows = h - 9
-    local y = 8
+    local maxRows = h - 11
+    local y = 10
     for i = ui.scroll + 1, math.min(#items, ui.scroll + maxRows) do
         local item = items[i]
         local hasRecipe = recipes.has(item.name)
-        btn(mon, 4, y, 8, "ORDER", "CRAFT_INIT:" .. item.name,
+        btn(mon, 4, y, 7, "ORDER", "CRAFT_INIT:" .. item.name,
             hasRecipe and C.tab_on or C.tab_off, colors.white)
-        textAt(mon, 14, y, string.format("%-26s x%d", shortName(item.name, 26), item.qty),
-            hasRecipe and C.ok or C.text, C.panel)
+        textAt(mon, 13, y, shortName(item.name, 28), hasRecipe and C.ok or C.text, C.panel)
+        textAt(mon, 43, y, string.format("x%d", item.qty), colors.white, C.panel)
         y = y + 1
     end
 
     if #items == 0 then
-        textAt(mon, 4, 9, "Storage empty.", C.bad, C.panel)
-        textAt(mon, 4, 10, "Connect chests to wired network.", C.muted, C.panel)
+        textAt(mon, 4, 11, "Storage empty.", C.bad, C.panel)
+        textAt(mon, 4, 12, "Connect chests to wired network.", C.muted, C.panel)
         if _G.GRID_NAME then
-            textAt(mon, 4, 12, "Scanner chest: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
-            textAt(mon, 4, 13, "(excluded from storage - normal)", C.muted, C.panel)
+            textAt(mon, 4, 14, "Scanner chest: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
+            textAt(mon, 4, 15, "(excluded from storage - normal)", C.muted, C.panel)
         end
     end
 end
@@ -381,11 +384,14 @@ local function drawConf(mon, w, h)
     btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
 
+    textAt(mon, 4, 9, "Status       Inventory Name             Assigned Role", C.title, C.panel)
+    textAt(mon, 3, 10, string.rep("-", w - 14), C.border, C.panel)
+
     local invs = _G.NETWORK_INVENTORIES or {}
     table.sort(invs)
 
-    local maxRows = math.floor((h - 10) / 1)
-    local y = 9
+    local maxRows = h - 12
+    local y = 11
     for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + maxRows) do
         local name = invs[i]
         local role = roleOf(name)
@@ -397,19 +403,19 @@ local function drawConf(mon, w, h)
             label = role
             bg = C.muted
         end
-        btn(mon, 4, y, 12, isScanner and "[ SCANNER ]" or label,
+        btn(mon, 4, y, 11, isScanner and "SCANNER" or label,
             "SET_GRID:" .. name, bg,
             isScanner and colors.black or colors.white)
 
-        textAt(mon, 18, y, string.format("%-26s", shortName(name, 26)), C.text, C.panel)
-        textAt(mon, 46, y, "[" .. role .. "]", isScanner and C.ok or C.muted, C.panel)
+        textAt(mon, 17, y, shortName(name, 26), C.text, C.panel)
+        textAt(mon, 45, y, string.format("[%s]", role), isScanner and C.ok or C.muted, C.panel)
         y = y + 1
         if y > h - 3 then break end
     end
 
     if #invs == 0 then
-        textAt(mon, 4, 10, "No inventories found!", C.bad, C.panel)
-        textAt(mon, 4, 11, "Connect chests to Core's wired network.", C.muted, C.panel)
+        textAt(mon, 4, 11, "No inventories found!", C.bad, C.panel)
+        textAt(mon, 4, 12, "Connect chests to Core's wired network.", C.muted, C.panel)
     end
 end
 
