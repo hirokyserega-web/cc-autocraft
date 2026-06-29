@@ -83,6 +83,7 @@ function dispatcher.validateBuffers()
                 end
             end
         end
+        os.sleep(0) -- Yield to prevent watchdog crash during worker buffer verification
     end
 end
 

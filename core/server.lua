@@ -43,8 +43,6 @@ local function loadScanner()
     if name and peripheral.wrap(name) and scannerSignature(name) == sig then
         _G.GRID_NAME = name; return
     end
-    -- The chest name changed (common after a Minecraft world reboot): try to
-    -- rebind by matching fingerprint against every inventory on the network.
     if sig then
         local candidates = util.getInventories()
         for _, n in ipairs(candidates) do
@@ -53,6 +51,7 @@ local function loadScanner()
                 util.log("Scanner rebound to " .. n .. " (name changed but signature matched).")
                 return
             end
+            os.sleep(0) -- Yield to prevent watchdog crash during scanner fingerprint matching
         end
     end
     -- Fallback: exact name still exists but signature differs (chest content
