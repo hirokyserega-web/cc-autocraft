@@ -168,17 +168,21 @@ local function prepare_ingredients(task, worker)
         for slot = 1, size do
             local item = in_p.getItemDetail(slot)
             if item then storage.deposit(worker.buffers.input, slot, item.count) end
+            util.maybeYield(slot, 8)
         end
     end
 
     -- Group ingredients by (name, slot) so each grid cell is filled correctly.
+    local op = 0
     for _, ing in ipairs(recipe.ingredients) do
+        op = op + 1
         local needed = (ing.count or 1) * batches
         local target_slot = ing.slot or 4
         local extracted = storage.extract(ing.name, needed, worker.buffers.input, target_slot)
         if extracted < needed then
             util.log("WARN: extracted " .. extracted .. "/" .. needed .. " of " .. ing.name .. " for " .. task.name)
         end
+        util.maybeYield(op, 2)
     end
 end
 
@@ -246,7 +250,7 @@ function dispatcher.handleResult(workerId, task_id, success, error_msg)
                 for slot = 1, size do
                     local item = out_p.getItemDetail(slot)
                     if item then storage.deposit(worker.buffers.output, slot, item.count) end
-                    util.maybeYield(slot, 16)
+                    util.maybeYield(slot, 8)
                 end
             end
         end

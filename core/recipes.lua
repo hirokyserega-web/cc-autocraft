@@ -129,17 +129,22 @@ function recipes.arrange_grid(grid_name)
     if not p then return end
 
     local list = p.list() or {}
+    local op = 0
 
     for from_slot, to_slot in pairs(WORKBENCH_TO_GRID) do
+        op = op + 1
         local item = list[from_slot]
         if item and not list[to_slot] then
             -- Only move into an empty destination to avoid merging different
             -- items; pushItems already refuses to mix, this just skips the call.
             p.pushItems(grid_name, from_slot, item.count, to_slot)
+            os.sleep(0)
         elseif item and list[to_slot] and list[to_slot].name == item.name then
             -- Same item already in the grid cell -> stack it there.
             p.pushItems(grid_name, from_slot, item.count, to_slot)
+            os.sleep(0)
         end
+        util.maybeYield(op, 3)
     end
 end
 
