@@ -424,6 +424,19 @@ end)
 ----------------------------------------------------------------
 -- Run
 ----------------------------------------------------------------
+test("util.maybeYield actually sleeps at the threshold", function()
+    local util = require("lib.util")
+    local count = 0
+    local real_sleep = os.sleep
+    os.sleep = function(x) count = count + 1 end
+    for i = 1, 63 do util.maybeYield(i, 64) end
+    local before = count
+    util.maybeYield(64, 64)
+    util.maybeYield(128, 64)
+    os.sleep = real_sleep
+    assertEq(count - before, 2, true, "maybeYield fires every Nth call")
+end)
+
 local passed = 0
 for _, t in ipairs(tests) do
     local ok, err = pcall(t.fn)
@@ -440,6 +453,8 @@ for _, t in ipairs(tests) do
     local recipes = package.loaded["core.recipes"]
     if recipes then recipes.data = {} end
 end
+
+
 
 print(string.format("\n%d/%d passed, %d failed", passed, #tests, failures))
 os.exit(failures == 0 and 0 or 1)

@@ -89,4 +89,13 @@ function util.cleanName(name)
     return name:match(":(.+)") or name
 end
 
+
+-- Yield helper for long-running sync loops. CC:T raises "Too long without
+-- yielding" after a few hundred peripheral calls in a row. Pass an integer
+-- counter that you bump on each iteration; this function calls os.sleep(0)
+-- (a cheap yield that lets the Lua VM breathe) after every Nth call.
+function util.maybeYield(counter, every)
+    every = every or 64
+    if counter % every == 0 then os.sleep(0) end
+end
 return util

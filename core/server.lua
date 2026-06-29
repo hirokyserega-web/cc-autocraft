@@ -189,12 +189,17 @@ local function trigger_test_craft()
     end
 
     -- Clear the worker's input and output buffers back into storage.
+    local bc = 0
     for _, bname in ipairs({ worker.buffers.input, worker.buffers.output }) do
         local p = peripheral.wrap(bname)
         if p then
             for slot = 1, (p.size() or 27) do
                 local item = p.getItemDetail(slot)
-                if item then storage.deposit(bname, slot, item.count) end
+                if item then
+                    storage.deposit(bname, slot, item.count)
+                    bc = bc + 1
+                end
+                util.maybeYield(bc, 16)
             end
         end
     end
@@ -363,6 +368,10 @@ function main()
             storage.refresh()
             if _G.GRID_NAME then recipes.arrange_grid(_G.GRID_NAME) end
             dispatcher.processQueue()
+            -- Yield at the end of a heavy tick so a fully-loaded storage
+            -- network (many chests * many slots) cannot trip the
+            -- "Too long without yielding" watchdog.
+            os.sleep(0)
             tick = os.startTimer(0.5)
 
         elseif event == "rednet_message" then
@@ -392,6 +401,11 @@ function main()
         end
 
         if monName then ui.draw(monName) end
+
+        -- Cheap housekeeping yield: lets the VM run other coroutines and
+        -- prevents "Too long without yielding" when several handlers ran in a
+        -- row (e.g. a rednet_message plus a monitor_touch).
+        os.sleep(0)
     end
 end
 

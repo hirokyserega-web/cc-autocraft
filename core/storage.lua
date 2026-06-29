@@ -11,9 +11,12 @@ storage.buffers = {}     -- { [bufferName] = true } (populated by dispatcher)
 -- active scanner grid and NOT a worker buffer. Those are treated specially.
 function storage.refresh()
     storage.cache = {}
+    local _op = 0  -- yields
     storage.peripherals = {}
     local names = peripheral.getNames()
+    local _op = 0
     for _, name in ipairs(names) do
+        _op = _op + 1; util.maybeYield(_op, 8)
         if util.isInventory(name) then
             -- Skip the active recipe grid and worker buffer chests
             if name ~= _G.GRID_NAME and not storage.buffers[name] then
@@ -60,6 +63,7 @@ end
 function storage.extract(itemName, count, toPeripheral, toSlot)
     if count <= 0 then return 0 end
     local remaining = count
+    local _op = 0  -- yields
     for _, pName in ipairs(storage.peripherals) do
         if pName ~= toPeripheral and pName ~= _G.GRID_NAME and not storage.buffers[pName] then
             local p = peripheral.wrap(pName)
@@ -67,6 +71,7 @@ function storage.extract(itemName, count, toPeripheral, toSlot)
                 local items = p.list()
                 local size = p.size() or 27
                 for slot = 1, size do
+                    _op = _op + 1; util.maybeYield(_op, 16)
                     local item = items[slot]
                     if item and item.name == itemName then
                         local moveCount = math.min(remaining, item.count)
@@ -86,6 +91,7 @@ end
 -- Returns the number actually moved.
 function storage.deposit(fromPeripheral, fromSlot, count)
     if count <= 0 then return 0 end
+    local _op = 0  -- yields
     -- Read the source item so we can target matching/empty slots efficiently.
     local srcP = peripheral.wrap(fromPeripheral)
     local srcName = nil
@@ -101,6 +107,7 @@ function storage.deposit(fromPeripheral, fromSlot, count)
                 local size = p.size() or 27
                 local items = p.list()
                 for slot = 1, size do
+                    _op = _op + 1; util.maybeYield(_op, 16)
                     local existing = items[slot]
                     -- pullItems stacks same items and moves into empty slots;
                     -- it returns 0 for slots holding a different item, so we

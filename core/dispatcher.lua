@@ -242,6 +242,7 @@ function dispatcher.handleResult(workerId, task_id, success, error_msg)
                 for slot = 1, size do
                     local item = out_p.getItemDetail(slot)
                     if item then storage.deposit(worker.buffers.output, slot, item.count) end
+                    util.maybeYield(slot, 16)
                 end
             end
         end
