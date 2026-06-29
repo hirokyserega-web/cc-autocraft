@@ -18,19 +18,19 @@ local ui = {
 -- Theme
 local C = {
     bg       = colors.black,
-    header   = colors.purple,     -- Sleek royal purple header
-    tab_on   = colors.magenta,    -- Bright magenta active tab
+    header   = colors.gray,       -- Sleek grey header
+    tab_on   = colors.cyan,       -- Vibrant cyan active tab
     tab_off  = colors.gray,       -- Darker gray for inactive tabs
     panel    = colors.black,
-    border   = colors.purple,     -- Purple accented borders
-    title    = colors.cyan,       -- Cyan titles for high visibility
+    border   = colors.gray,       -- Subtle gray borders
+    title    = colors.cyan,       -- Cyan titles for tech aesthetic
     text     = colors.white,
     muted    = colors.lightGray,
     ok       = colors.lime,       -- Lime for success / positive states
-    warn     = colors.orange,     -- Orange for warning / progress states
+    warn     = colors.yellow,     -- Yellow for warnings
     bad      = colors.red,        -- Red for errors
-    active   = colors.cyan,
-    accent   = colors.magenta
+    active   = colors.lightBlue,  -- Light blue highlight
+    accent   = colors.cyan
 }
 
 ----------------------------------------------------------------------
@@ -528,7 +528,6 @@ function ui.draw(monName)
     local mon = peripheral.wrap(monName)
     if not mon then return end
     ui.btns = {}
-    mon.setTextScale(0.5)
     local w, h = mon.getSize()
 
     fill(mon, 1, 1, w, h, C.bg)

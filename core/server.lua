@@ -373,6 +373,9 @@ function main()
     loadScanner()
 
     local mon = peripheral.find("monitor")
+    if mon then
+        mon.setTextScale(0.5)
+    end
     local monName = mon and peripheral.getName(mon)
     if not monName then print("Warning: monitor not found!") end
 
@@ -388,6 +391,7 @@ function main()
             _G.GRID_OUTPUT = od and od.name or nil
         end
     end
+    if monName then ui.draw(monName) end -- Draw UI immediately at startup!
     local tick = os.startTimer(0.5)
 
     while true do
