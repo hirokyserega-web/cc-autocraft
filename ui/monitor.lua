@@ -18,19 +18,19 @@ local ui = {
 -- Theme
 local C = {
     bg       = colors.black,
-    header   = colors.gray,       -- Sleek grey header
-    tab_on   = colors.cyan,       -- Vibrant cyan active tab
-    tab_off  = colors.gray,       -- Darker gray for inactive tabs
+    header   = colors.gray,       -- Sleek dark grey header
+    tab_on   = colors.blue,       -- Strict corporate/industrial blue
+    tab_off  = colors.gray,       -- Gray for inactive tabs
     panel    = colors.black,
-    border   = colors.gray,       -- Subtle gray borders
-    title    = colors.cyan,       -- Cyan titles for tech aesthetic
+    border   = colors.gray,       -- Gray borders
+    title    = colors.lightBlue,  -- Light blue for group titles
     text     = colors.white,
     muted    = colors.lightGray,
-    ok       = colors.lime,       -- Lime for success / positive states
-    warn     = colors.yellow,     -- Yellow for warnings
-    bad      = colors.red,        -- Red for errors
-    active   = colors.lightBlue,  -- Light blue highlight
-    accent   = colors.cyan
+    ok       = colors.lime,
+    warn     = colors.yellow,
+    bad      = colors.red,
+    active   = colors.lightBlue,
+    accent   = colors.blue
 }
 
 ----------------------------------------------------------------------
@@ -214,7 +214,7 @@ local function drawDash(mon, w, h)
             elseif t.status == "FAILED" then
                 badgeText, bgCol, fgCol = " FAIL ", colors.red, colors.white
             elseif t.status == "ACTIVE" then
-                badgeText, bgCol, fgCol = " WORK ", colors.cyan, colors.black
+                badgeText, bgCol, fgCol = " WORK ", colors.blue, colors.white
             else
                 badgeText, bgCol, fgCol = " WAIT ", colors.lightGray, colors.black
             end
