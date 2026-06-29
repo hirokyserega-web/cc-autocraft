@@ -353,12 +353,12 @@ local function handleButton(btn_id)
     -- Process manual worker buffer mapping
     if btn_id:sub(1, 15) == "SET_WORKER_BUF:" then
         local parts = {}
-        for s in string.gmatch(btn_id:sub(16), "([^:]+)") do
+        for s in string.gmatch(btn_id:sub(16), "([^|]+)") do
             table.insert(parts, s)
         end
         local mode, chest, workerId = parts[1], parts[2], tonumber(parts[3])
         if mode and chest and workerId then
-            local w = dispatcher.workers[workerId]
+            local w = dispatcher.workers[workerId] or dispatcher.workers[tostring(workerId)]
             if w then
                 if not w.buffers then w.buffers = {} end
                 if mode == "IN" then

@@ -568,7 +568,7 @@ local function drawSelectWorkerModal(mon, w, h)
     local y = my + 6
     for _, id in ipairs(ids) do
         btn(mon, mx + 4, y, 14, "Worker #" .. id,
-            string.format("SET_WORKER_BUF:%s:%s:%s", ui.modal.mode, ui.modal.chest, id),
+            string.format("SET_WORKER_BUF:%s|%s|%s", ui.modal.mode, ui.modal.chest, id),
             C.tab_on, colors.white)
         y = y + 2
         if y > my + mh - 3 then break end
