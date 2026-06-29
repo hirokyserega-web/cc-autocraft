@@ -6,6 +6,9 @@ storage.cache = {} -- { [name] = count }
 storage.reserved = {} -- { [name] = count }
 storage.peripherals = {} -- names of inventory peripherals
 
+-- Central 3x3 Grid slots in a 9x3 chest
+local GRID_SLOTS = {4, 5, 6, 13, 14, 15, 22, 23, 24}
+
 function storage.refresh()
     storage.cache = {}
     storage.peripherals = {}
@@ -15,8 +18,13 @@ function storage.refresh()
             table.insert(storage.peripherals, name)
             local p = peripheral.wrap(name)
             local items = p.list()
-            for _, item in pairs(items) do
-                storage.cache[item.name] = (storage.cache[item.name] or 0) + item.count
+            
+            -- User requested ONLY central grid slots to be scanned
+            for _, slot in ipairs(GRID_SLOTS) do
+                local item = items[slot]
+                if item then
+                    storage.cache[item.name] = (storage.cache[item.name] or 0) + item.count
+                end
             end
         end
     end
@@ -50,8 +58,11 @@ function storage.extract(itemName, count, toPeripheral, toSlot)
         if pName ~= toPeripheral then
             local p = peripheral.wrap(pName)
             local items = p.list()
-            for slot, item in pairs(items) do
-                if item.name == itemName then
+            
+            -- Only extract from GRID slots
+            for _, slot in ipairs(GRID_SLOTS) do
+                local item = items[slot]
+                if item and item.name == itemName then
                     local moveCount = math.min(remaining, item.count)
                     local moved = p.pushItems(toPeripheral, slot, moveCount, toSlot)
                     remaining = remaining - moved
@@ -70,10 +81,16 @@ function storage.deposit(fromPeripheral, fromSlot, count)
     for _, pName in ipairs(storage.peripherals) do
         if pName ~= fromPeripheral then
             local p = peripheral.wrap(pName)
-            local moved = p.pullItems(fromPeripheral, fromSlot, remaining)
-            remaining = remaining - moved
-            if remaining <= 0 then break end
+            
+            -- Deposit only into empty GRID slots
+            local items = p.list()
+            for _, slot in ipairs(GRID_SLOTS) do
+                local moved = p.pullItems(fromPeripheral, fromSlot, remaining, slot)
+                remaining = remaining - moved
+                if remaining <= 0 then break end
+            end
         end
+        if remaining <= 0 then break end
     end
     return count - remaining
 end

@@ -2,6 +2,13 @@ local util = require("lib.util")
 local recipes = { data = {} }
 recipes.PATH = "data/recipes.dat"
 
+-- Central 3x3 Grid for 9x3 chest
+-- [ 4, 5, 6 ]
+-- [13,14,15 ]
+-- [22,23,24 ]
+local GRID_SLOTS = {4, 5, 6, 13, 14, 15, 22, 23, 24}
+local OUTPUT_SLOT = 16
+
 function recipes.load()
     recipes.data = util.load(recipes.PATH) or {}
 end
@@ -18,17 +25,17 @@ function recipes.get_from_grid(pName)
     local items = p.list()
     local ingredients = {}
     
-    -- We assume slots 1-9 are the 3x3 grid, slot 16 is the output
-    for i = 1, 9 do
-        local detail = p.getItemDetail(i)
+    -- Scan ONLY the central grid slots
+    for _, slot in ipairs(GRID_SLOTS) do
+        local detail = p.getItemDetail(slot)
         if detail then
-            table.insert(ingredients, {name = detail.name, count = 1, slot = i})
+            table.insert(ingredients, {name = detail.name, count = 1, slot = slot})
         end
     end
     
-    local outDetail = p.getItemDetail(16)
-    if not outDetail then return nil, "Put the result item in slot 16" end
-    if #ingredients == 0 then return nil, "Grid is empty" end
+    local outDetail = p.getItemDetail(OUTPUT_SLOT)
+    if not outDetail then return nil, "Put the result item in slot " .. OUTPUT_SLOT end
+    if #ingredients == 0 then return nil, "Grid is empty (slots 4,5,6,13,14,15,22,23,24)" end
     
     return {
         output = {name = outDetail.name, count = outDetail.count},
