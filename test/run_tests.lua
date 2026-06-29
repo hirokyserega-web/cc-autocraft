@@ -334,6 +334,42 @@ test("recipes.arrange_grid shifts left to center", function()
     _G.GRID_NAME = nil
 end)
 
+test("getReadyWorker auto-assigns buffers", function()
+    local dispatcher = require("core.dispatcher")
+    local storage = require("core.storage")
+    storage.buffers = { chest_buf = true }
+    dispatcher.queue = {
+        { id = "a", plan_id = "p1", order = 1, status = "ACTIVE",   name = "x", count = 1 },
+        { id = "b", plan_id = "p1", order = 2, status = "PENDING",  name = "y", count = 1 },
+        { id = "c", plan_id = "p2", order = 1, status = "PENDING",  name = "z", count = 1 },
+    }
+    -- b waits for a (same plan, lower order, not COMPLETED)
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[2]), false, "b blocked by active a")
+    -- c is a different plan -> ready
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[3]), true, "c independent -> ready")
+    -- mark a done -> b ready
+    dispatcher.queue[1].status = "COMPLETED"
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[2]), true, "b ready after a completes")
+end)
+
+test("getReadyWorker auto-assigns buffers with multiple", function()
+    local dispatcher = require("core.dispatcher")
+    local storage = require("core.storage")
+    storage.buffers = { chest_buf = true }
+    dispatcher.queue = {
+        { id = "a", plan_id = "p1", order = 1, status = "ACTIVE",   name = "x", count = 1 },
+        { id = "b", plan_id = "p1", order = 2, status = "PENDING",  name = "y", count = 1 },
+        { id = "c", plan_id = "p2", order = 1, status = "PENDING",  name = "z", count = 1 },
+    }
+    -- b waits for a (same plan, lower order, not COMPLETED)
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[2]), false, "b blocked by active a")
+    -- c is a different plan -> ready
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[3]), true, "c independent -> ready")
+    -- mark a done -> b ready
+    dispatcher.queue[1].status = "COMPLETED"
+    assertEq(isReadyExport(dispatcher, dispatcher.queue[2]), true, "b ready after a completes")
+end)
+
 -- 9. dispatcher isReady serialization within a plan.
 test("dispatcher isReady serializes plan", function()
     local dispatcher = require("core.dispatcher")

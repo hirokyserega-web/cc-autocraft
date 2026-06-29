@@ -22,6 +22,18 @@ function util.save(path, data)
     return false
 end
 
+function util.saveSafe(path, data)
+    local dir = path:match("(.+)/")
+    if dir and not fs.exists(dir) then fs.makeDir(dir) end
+    local f = fs.open(path, "w")
+    if f then
+        f.write(textutils.serialize(data))
+        f.close()
+        return true
+    end
+    return false
+end
+
 function util.load(path)
     if not fs.exists(path) then return nil end
     local f = fs.open(path, "r")

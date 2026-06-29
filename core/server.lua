@@ -7,19 +7,64 @@ local ui = require("ui.monitor")
 local planner = require("core.planner")
 local util = require("lib.util")
 
-_G.GRID_NAME = nil       -- peripheral name of the scanner chest
-_G.active_test = nil     -- { worker_id, ingredients, scanner_chest }
+_G.GRID_NAME = nil       -- name of the scanner chest
+_G.active_test = nil     -- current test craft state
 local SCANNER_PATH = "data/scanner.dat"
+
+local function scannerSignature(name)
+    if not name then return nil end
+    local p = peripheral.wrap(name)
+    if not p or type(p.list) ~= "function" then return nil end
+    -- Prefer inventory content as the identity. When the chest is empty,
+    -- use the peripheral type label so two empty chests don't hash to the same value.
+    local list = p.list() or {}
+    local total = 0
+    local first
+    for _, item in pairs(list) do
+        total = total + item.count
+        if not first then first = item.name end
+    end
+    if total == 0 then
+        return "empty:" .. (peripheral.getType(name) or "?") .. ":" .. (p.size() or 27)
+    end
+    return string.format("s%d:%s", total, first or "?")
+end
 
 local function loadScanner()
     local saved = util.load(SCANNER_PATH)
-    if saved and type(saved) == "string" then
-        if peripheral.wrap(saved) then _G.GRID_NAME = saved end
+    if type(saved) ~= "table" then
+        -- Backward compat: older installs stored a bare string.
+        if type(saved) == "string" and saved ~= "" and peripheral.wrap(saved) then
+            _G.GRID_NAME = saved
+        end
+        return
+    end
+    local name, sig = saved.name, saved.signature
+    if name and peripheral.wrap(name) and scannerSignature(name) == sig then
+        _G.GRID_NAME = name; return
+    end
+    -- The chest name changed (common after a Minecraft world reboot): try to
+    -- rebind by matching fingerprint against every inventory on the network.
+    if sig then
+        local candidates = util.getInventories()
+        for _, n in ipairs(candidates) do
+            if scannerSignature(n) == sig then
+                _G.GRID_NAME = n
+                util.log("Scanner rebound to " .. n .. " (name changed but signature matched).")
+                return
+            end
+        end
+    end
+    -- Fallback: exact name still exists but signature differs (chest content
+    -- changed - probably an entirely different chest now); keep the user choice.
+    if name and peripheral.wrap(name) then
+        _G.GRID_NAME = name
     end
 end
 
 local function saveScanner()
-    util.save(SCANNER_PATH, _G.GRID_NAME or "")
+    local sig = _G.GRID_NAME and scannerSignature(_G.GRID_NAME)
+    util.save(SCANNER_PATH, { name = _G.GRID_NAME, signature = sig })
 end
 
 ----------------------------------------------------------------
@@ -132,17 +177,6 @@ local function trigger_test_craft()
         return
     end
 
-    -- Find an idle worker that already has buffers.
-    local worker_id
-    for wid, w in pairs(dispatcher.workers) do
-        if w.status == "IDLE" and w.buffers then worker_id = wid break end
-    end
-    if not worker_id then
-        ui.modal = { type = "RECIPE_FAILED", error = "No free turtle with buffers." }
-        return
-    end
-
-    local worker = dispatcher.workers[worker_id]
     storage.refresh()
 
     -- Clear the scanner's output slot (16) into storage so a new result can land there.

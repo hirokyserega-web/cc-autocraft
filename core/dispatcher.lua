@@ -5,14 +5,43 @@ local storage = require("core.storage")
 
 dispatcher.queue = {}    -- [ {id, name, count, recipe, batches, status, plan_id, order, error} ]
 dispatcher.workers = {}  -- { [id] = { status, task_id, buffers={input, output} } }
+dispatcher.idle_count = 0
 dispatcher.PATH = "data/dispatcher.dat"
 
+-- Find (or auto-assign buffers for) the first IDLE worker in deterministic
+-- (numeric, ascending) order. Returns workerId, worker, or nil + reason.
+-- Worker selection must be deterministic: with two IDLE workers and one task,
+-- the lower ID always wins, so the user knows which turtle will run.
+function dispatcher.getReadyWorker()
+    local ids = {}
+    for id in pairs(dispatcher.workers) do table.insert(ids, id) end
+    table.sort(ids, function(a, b) return a < b end)
+    for _, id in ipairs(ids) do
+        local w = dispatcher.workers[id]
+        if w.status == "IDLE" then
+            -- Auto-assign buffers if missing or invalid
+            if not w.buffers or not util.isInventory(w.buffers.input) or not util.isInventory(w.buffers.output) then
+                local ok, reason = dispatcher.autoAssignBuffers(id)
+                if not ok then
+                    util.log("Worker #" .. id .. " can't get buffers: " .. tostring(reason), "WARN")
+                else
+                    w = dispatcher.workers[id]
+                end
+            end
+            if w.buffers and util.isInventory(w.buffers.input) and util.isInventory(w.buffers.output) then
+                return id, w
+            end
+        end
+    end
+    return nil, "No IDLE worker with valid buffers"
+end
+
 function dispatcher.save()
-    local snapshot = {
+    util.save(dispatcher.PATH, {
         queue = dispatcher.queue,
-        workers = dispatcher.workers
-    }
-    util.save(dispatcher.PATH, snapshot)
+        workers = dispatcher.workers,
+        reserved = storage.reserved
+    })
 end
 
 function dispatcher.updateStorageBuffers()
@@ -30,8 +59,31 @@ function dispatcher.load()
     if data then
         dispatcher.queue = data.queue or {}
         dispatcher.workers = data.workers or {}
+        if data.reserved then
+            for n, q in pairs(data.reserved) do
+                storage.reserved[n] = (storage.reserved[n] or 0) + q
+            end
+        end
     end
+    dispatcher.validateBuffers()
     dispatcher.updateStorageBuffers()
+end
+
+-- Drop any worker whose previously-assigned buffers are no longer reachable
+-- (peripheral removed / renamed / computer rebooted with different device id).
+function dispatcher.validateBuffers()
+    for id, w in pairs(dispatcher.workers) do
+        if w.buffers then
+            local ok = util.isInventory(w.buffers.input) and util.isInventory(w.buffers.output)
+            if not ok then
+                w.buffers = nil
+                if w.status == "CRAFTING" or w.status == "TESTING" then
+                    w.status = "IDLE"
+                    w.task_id = nil
+                end
+            end
+        end
+    end
 end
 
 -- Auto-assign two free inventory chests as this worker's input/output buffers.
@@ -128,40 +180,42 @@ local function prepare_ingredients(task, worker)
     end
 end
 
--- Dispatch ready PENDING tasks to IDLE workers that have buffers.
+-- Dispatch one task per available worker, in task-queue order,
 function dispatcher.processQueue()
     dispatcher.updateStorageBuffers()
 
     local net = require("lib.net")
+    local workerId, worker
 
-    for workerId, worker in pairs(dispatcher.workers) do
-        if worker.status == "IDLE" and worker.buffers then
-            local pending_task = nil
-            for _, t in ipairs(dispatcher.queue) do
-                if t.status == "PENDING" and isReady(t) then
-                    pending_task = t
-                    break
-                end
-            end
-
-            if pending_task then
-                util.log("Dispatching " .. pending_task.name .. " x" .. pending_task.count .. " to worker " .. workerId)
-                prepare_ingredients(pending_task, worker)
-
-                pending_task.status = "ACTIVE"
-                worker.status = "CRAFTING"
-                worker.task_id = pending_task.id
-                dispatcher.save()
-
-                net.send(workerId, "CRAFT_REQUEST", {
-                    id = pending_task.id,
-                    name = pending_task.name,
-                    recipe = pending_task.recipe,
-                    count = pending_task.count,
-                    batches = pending_task.batches
-                })
+    workerId, worker = dispatcher.getReadyWorker()
+    while worker do
+        local pending_task = nil
+        for _, t in ipairs(dispatcher.queue) do
+            if t.status == "PENDING" and isReady(t) then
+                pending_task = t
+                break
             end
         end
+
+        if pending_task then
+            util.log("Dispatching " .. pending_task.name .. " x" .. pending_task.count .. " to worker " .. workerId)
+            prepare_ingredients(pending_task, worker)
+
+            pending_task.status = "ACTIVE"
+            worker.status = "CRAFTING"
+            worker.task_id = pending_task.id
+            dispatcher.save()
+
+            net.send(workerId, "CRAFT_REQUEST", {
+                id = pending_task.id,
+                name = pending_task.name,
+                recipe = pending_task.recipe,
+                count = pending_task.count,
+                batches = pending_task.batches
+            })
+        end
+
+        workerId, worker = dispatcher.getReadyWorker()
     end
 end
 

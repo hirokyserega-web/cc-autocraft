@@ -20,7 +20,7 @@
   выбранный сканер сохраняются в файлы.
 
 ## Установка
-В Minecraft (нужен HTTP API) на Core-компьютере:
+Запустите эту одну команду в Minecraft (требуется HTTP API) на Core-компьютере:
 ```bash
 wget https://raw.githubusercontent.com/hirokyserega-web/cc-autocraft/main/install.lua
 install.lua
