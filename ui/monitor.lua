@@ -1,472 +1,543 @@
+-- Monitor UI for cc-autocraft
+-- Clean, tabbed interface: Dashboard / Storage / Recipes / Settings.
 local dispatcher = require("core.dispatcher")
 local storage = require("core.storage")
 local recipes = require("core.recipes")
+local util = require("lib.util")
 
 local ui = {
     tab = "DASH",
     modal = nil,
     btns = {},
     scroll = 0,
-    recipe_scroll = 0
+    recipe_scroll = 0,
+    conf_scroll = 0
 }
 
-local function rect(mon, x, y, w, h, bg, border)
-    if bg then
-        mon.setBackgroundColor(bg)
-        for i=0, h-1 do
-            mon.setCursorPos(x, y+i)
-            mon.write(string.rep(" ", w))
-        end
+-- Theme
+local C = {
+    bg       = colors.black,
+    header   = colors.gray,
+    tab_on   = colors.blue,
+    tab_off  = colors.lightGray,
+    panel    = colors.black,
+    border   = colors.gray,
+    title    = colors.cyan,
+    text     = colors.white,
+    muted    = colors.lightGray,
+    ok       = colors.green,
+    warn     = colors.yellow,
+    bad      = colors.red,
+    active   = colors.orange,
+    accent   = colors.purple
+}
+
+----------------------------------------------------------------------
+-- Drawing primitives
+----------------------------------------------------------------------
+local function fill(mon, x, y, w, h, bg)
+    if not bg then return end
+    mon.setBackgroundColor(bg)
+    for i = 0, h - 1 do
+        mon.setCursorPos(x, y + i)
+        mon.write(string.rep(" ", w))
     end
+end
+
+local function box(mon, x, y, w, h, bg, border)
+    fill(mon, x, y, w, h, bg)
     if border then
         mon.setBackgroundColor(border)
-        mon.setCursorPos(x, y)
-        mon.write(string.rep(" ", w))
-        mon.setCursorPos(x, y+h-1)
-        mon.write(string.rep(" ", w))
-        for i=0, h-1 do
-            mon.setCursorPos(x, y+i)
-            mon.write(" ")
-            mon.setCursorPos(x+w-1, y+i)
-            mon.write(" ")
+        mon.setCursorPos(x, y);             mon.write(string.rep(" ", w))
+        mon.setCursorPos(x, y + h - 1);     mon.write(string.rep(" ", w))
+        for i = 0, h - 1 do
+            mon.setCursorPos(x, y + i);         mon.write(" ")
+            mon.setCursorPos(x + w - 1, y + i); mon.write(" ")
         end
     end
 end
 
-local function draw_small_btn(mon, x, y, w, text, id, bg, fg)
-    mon.setBackgroundColor(bg or colors.blue)
-    mon.setTextColor(fg or colors.white)
+local function textAt(mon, x, y, s, fg, bg)
+    mon.setTextColor(fg or C.text)
+    mon.setBackgroundColor(bg or C.bg)
     mon.setCursorPos(x, y)
-    local label = text
-    if #label < w then
-        local pad = math.floor((w - #label) / 2)
-        label = string.rep(" ", pad) .. label .. string.rep(" ", w - #label - pad)
+    mon.write(s)
+end
+
+-- Draw a clickable button and register its hit rect.
+local function btn(mon, x, y, w, label, id, bg, fg)
+    bg = bg or C.tab_on
+    fg = fg or colors.white
+    mon.setBackgroundColor(bg)
+    mon.setTextColor(fg)
+    mon.setCursorPos(x, y)
+    local s = label
+    if #s < w then
+        local pad = math.floor((w - #s) / 2)
+        s = string.rep(" ", pad) .. s .. string.rep(" ", w - #s - pad)
+    elseif #s > w then
+        s = s:sub(1, w)
     end
-    mon.write(label)
-    table.insert(ui.btns, {x1=x, y1=y, x2=x+w-1, y2=y, id=id})
+    mon.write(s)
+    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, id = id })
 end
 
-local function draw_btn(mon, x, y, w, text, id, active)
-    local bg = active and colors.blue or colors.gray
-    draw_small_btn(mon, x, y, w, text, id, bg, colors.white)
+-- Register an invisible hit area over already-drawn text.
+local function hit(x, y, w, id)
+    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, id = id })
 end
 
-local function clean_name(name)
+local function cleanName(name)
     if not name then return "" end
     return name:match(":(.+)") or name
 end
 
-local function group_ingredients(ingredients)
+local function shortName(name, n)
+    return cleanName(name):sub(1, n or 16)
+end
+
+-- Group ingredients by name, summing counts. Returns sorted list.
+local function groupIngredients(ingredients)
     local grouped = {}
     for _, ing in ipairs(ingredients) do
         grouped[ing.name] = (grouped[ing.name] or 0) + (ing.count or 1)
     end
     local list = {}
     for name, count in pairs(grouped) do
-        table.insert(list, {name = name, count = count})
+        table.insert(list, { name = name, count = count })
     end
     table.sort(list, function(a, b) return a.name < b.name end)
     return list
 end
 
-local function draw_grid_preview(mon, x, y)
-    -- Wrap grid chest to show real items in 3x3
+-- Detect inventory role for a peripheral name.
+local function roleOf(name)
+    if name == _G.GRID_NAME then return "СКАНЕР" end
+    for _, w in pairs(dispatcher.workers) do
+        if w.buffers then
+            if w.buffers.input == name then return "БУФЕР-ВХОД" end
+            if w.buffers.output == name then return "БУФЕР-ВЫХОД" end
+        end
+    end
+    return "СКЛАД"
+end
+
+----------------------------------------------------------------------
+-- Header + status bar
+----------------------------------------------------------------------
+local function drawHeader(mon, w)
+    fill(mon, 1, 1, w, 3, C.header)
+    textAt(mon, 2, 2, "CC-AUTOCRAFT 2.0", C.title, C.header)
+
+    local tabs = {
+        { id = "DASH",    text = "ГЛАВНАЯ" },
+        { id = "STORAGE", text = "СКЛАД" },
+        { id = "RECIPE",  text = "РЕЦЕПТЫ" },
+        { id = "CONF",    text = "НАСТРОЙКИ" }
+    }
+    local tw = 12
+    local gap = 1
+    local totalW = #tabs * tw + (#tabs - 1) * gap
+    local startX = w - totalW - 1
+    for i, t in ipairs(tabs) do
+        local x = startX + (i - 1) * (tw + gap)
+        btn(mon, x, 2, tw, t.text, "TAB:" .. t.id,
+            ui.tab == t.id and C.tab_on or C.tab_off, colors.black)
+    end
+end
+
+local function drawStatus(mon, w)
+    fill(mon, 1, 4, w, 1, colors.black)
+    local itemCount = 0
+    for _ in pairs(storage.cache) do itemCount = itemCount + 1 end
+    local workerCount = 0
+    for _ in pairs(dispatcher.workers) do workerCount = workerCount + 1 end
+    local pending = 0
+    for _, t in ipairs(dispatcher.queue) do
+        if t.status == "PENDING" or t.status == "ACTIVE" then pending = pending + 1 end
+    end
+
+    local scanner = _G.GRID_NAME and cleanName(_G.GRID_NAME) or "НЕ ВЫБРАН"
+    local s = string.format(" Сканер: %-14s  Склад: %d предм.  Воркеры: %d  Очередь: %d",
+        scanner:sub(1, 14), itemCount, workerCount, pending)
+    textAt(mon, 1, 4, s, C.muted, colors.black)
+end
+
+----------------------------------------------------------------------
+-- Tab: Dashboard
+----------------------------------------------------------------------
+local function drawDash(mon, w, h)
+    local leftW = math.max(20, math.floor(w * 0.42))
+    local leftX = 2
+    local rightX = leftX + leftW + 1
+
+    -- Workers panel
+    box(mon, leftX, 5, leftW, h - 5, C.panel, C.border)
+    textAt(mon, leftX + 1, 6, "ВОРКЕРЫ (ЧЕРЕПАХИ)", C.title, C.panel)
+
+    local y = 8
+    local anyWorker = false
+    for id, info in pairs(dispatcher.workers) do
+        anyWorker = true
+        local statusText, color
+        if info.status == "IDLE" then
+            statusText, color = "СВОБОДЕН", C.ok
+        elseif info.status == "CRAFTING" then
+            statusText, color = "КРАФТИТ", C.active
+        elseif info.status == "TESTING" then
+            statusText, color = "ТЕСТ", C.warn
+        else
+            statusText, color = tostring(info.status), C.bad
+        end
+        textAt(mon, leftX + 1, y, string.format("#%-3d [%s]", id, statusText), color, C.panel)
+        y = y + 1
+        if y > h - 2 then break end
+    end
+    if not anyWorker then
+        textAt(mon, leftX + 1, 8, "Нет воркеров.", C.muted, C.panel)
+        textAt(mon, leftX + 1, 9, "Запустите worker.lua", C.muted, C.panel)
+        textAt(mon, leftX + 1, 10, "на черепахах.", C.muted, C.panel)
+    end
+
+    -- Queue panel
+    if rightX < w then
+        local rw = w - rightX
+        box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
+        textAt(mon, rightX + 1, 6, "ОЧЕРЕДЬ ЗАДАЧ", C.title, C.panel)
+        btn(mon, w - 11, 6, 10, "СБРОС", "CLR_QUEUE", C.bad, colors.white)
+
+        y = 8
+        for i = #dispatcher.queue, 1, -1 do
+            local t = dispatcher.queue[i]
+            local mark, stext, color
+            if t.status == "COMPLETED" then
+                mark, stext, color = "+", "OK", C.muted
+            elseif t.status == "FAILED" then
+                mark, stext, color = "!", "ОШИБКА", C.bad
+            elseif t.status == "ACTIVE" then
+                mark, stext, color = ">", "АКТИВЕН", C.active
+            else
+                mark, stext, color = "-", "ОЖИДАНИЕ", C.text
+            end
+            textAt(mon, rightX + 1, y,
+                string.format("[%s] %-16s x%d %s", mark, shortName(t.name, 16), t.count, stext),
+                color, C.panel)
+            y = y + 1
+            if y > h - 2 then break end
+        end
+        if #dispatcher.queue == 0 then
+            textAt(mon, rightX + 1, 8, "Очередь пуста.", C.muted, C.panel)
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- Tab: Storage
+----------------------------------------------------------------------
+local function drawStorage(mon, w, h)
+    box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
+    textAt(mon, 3, 6, "СОДЕРЖИМОЕ СКЛАДА", C.title, C.panel)
+
+    btn(mon, w - 7, 6, 6, "/\\ UP", "SUP", C.tab_off, colors.black)
+    btn(mon, w - 7, h - 2, 6, "\\/ DN", "SDN", C.tab_off, colors.black)
+
+    local items = {}
+    for name, qty in pairs(storage.cache) do
+        table.insert(items, { name = name, qty = qty })
+    end
+    table.sort(items, function(a, b) return a.name < b.name end)
+
+    local maxRows = h - 9
+    local y = 8
+    for i = ui.scroll + 1, math.min(#items, ui.scroll + maxRows) do
+        local item = items[i]
+        local hasRecipe = recipes.has(item.name)
+        btn(mon, 4, y, 8, "ЗАКАЗ", "CRAFT_INIT:" .. item.name,
+            hasRecipe and C.tab_on or C.tab_off, colors.white)
+        textAt(mon, 14, y, string.format("%-26s x%d", shortName(item.name, 26), item.qty),
+            hasRecipe and C.ok or C.text, C.panel)
+        y = y + 1
+    end
+
+    if #items == 0 then
+        textAt(mon, 4, 9, "Склад пуст.", C.bad, C.panel)
+        textAt(mon, 4, 10, "Подключите сундуки к проводной сети.", C.muted, C.panel)
+        if _G.GRID_NAME then
+            textAt(mon, 4, 12, "Сундук-сканер: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
+            textAt(mon, 4, 13, "(он исключён из склада - это нормально)", C.muted, C.panel)
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- Tab: Recipes
+----------------------------------------------------------------------
+local function drawGridPreview(mon, x, y)
     local list = {}
-    local out_item = nil
+    local outItem = nil
     if _G.GRID_NAME then
         local p = peripheral.wrap(_G.GRID_NAME)
         if p then
             list = p.list() or {}
-            local od = p.getItemDetail(16)
-            if od then out_item = od.name end
+            local od = p.getItemDetail(recipes.OUTPUT_SLOT)
+            if od then outItem = od.name end
         end
     end
 
-    local slot_map = {
-        {4, 0, 0}, {5, 4, 0}, {6, 8, 0},
-        {13, 0, 2}, {14, 4, 2}, {15, 8, 2},
-        {22, 0, 4}, {23, 4, 4}, {24, 8, 4}
+    -- positions of the 3x3 grid relative to (x,y)
+    local cells = {
+        { 4,  0, 0 }, { 5,  4, 0 }, { 6,  8, 0 },
+        { 13, 0, 2 }, { 14, 4, 2 }, { 15, 8, 2 },
+        { 22, 0, 4 }, { 23, 4, 4 }, { 24, 8, 4 }
     }
 
-    mon.setBackgroundColor(colors.gray)
-    mon.setTextColor(colors.white)
-    
-    for _, info in ipairs(slot_map) do
-        local slot, dx, dy = info[1], info[2], info[3]
+    for _, c in ipairs(cells) do
+        local slot, dx, dy = c[1], c[2], c[3]
         local item = list[slot]
-        mon.setCursorPos(x + dx, y + dy)
-        if item then
-            local short = clean_name(item.name):sub(1, 2):upper()
-            mon.write("[" .. short .. "]")
-        else
-            mon.write("[  ]")
+        textAt(mon, x + dx, y + dy, item and ("[" .. shortName(item.name, 2):upper() .. "]") or "[  ]",
+            C.text, C.panel)
+    end
+
+    textAt(mon, x + 12, y + 2, "=>", C.muted, C.panel)
+    textAt(mon, x + 15, y + 2, outItem and ("[" .. shortName(outItem, 3):upper() .. "]") or "[ ? ]",
+        C.warn, C.panel)
+end
+
+local function drawRecipe(mon, w, h)
+    local leftW = 28
+    local rightX = leftW + 3
+
+    -- Left: live grid + test button
+    box(mon, 2, 5, leftW, h - 5, C.panel, C.border)
+    textAt(mon, 3, 6, "СЕТКА КРАФТА 3x3", C.title, C.panel)
+
+    if not _G.GRID_NAME then
+        textAt(mon, 3, 8, "Сундук-сканер не выбран.", C.bad, C.panel)
+        textAt(mon, 3, 9, "Откройте НАСТРОЙКИ.", C.muted, C.panel)
+        return
+    end
+
+    textAt(mon, 3, 8, "Сканер: " .. shortName(_G.GRID_NAME, 20), C.muted, C.panel)
+    drawGridPreview(mon, 4, 10)
+    textAt(mon, 4, 16, "Положите крафт в центр", C.muted, C.panel)
+    textAt(mon, 4, 17, "сундука (слоты 4-6/13-15/22-24)", C.muted, C.panel)
+
+    local testLabel = _G.active_test and "ИДЁТ ТЕСТ..." or "ТЕСТ КРАФТА"
+    btn(mon, 3, 19, leftW - 2, testLabel, "TEST_CRAFT",
+        _G.active_test and C.muted or C.tab_on, colors.white)
+
+    -- Right: saved recipes
+    if rightX < w then
+        local rw = w - rightX - 1
+        box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
+        textAt(mon, rightX + 1, 6, "ИЗВЕСТНЫЕ РЕЦЕПТЫ", C.title, C.panel)
+        btn(mon, w - 7, 6, 6, "/\\ UP", "RSUP", C.tab_off, colors.black)
+        btn(mon, w - 7, h - 2, 6, "\\/ DN", "RSDN", C.tab_off, colors.black)
+
+        local recs = recipes.list()
+        local maxRows = h - 9
+        local y = 8
+        for i = ui.recipe_scroll + 1, math.min(#recs, ui.recipe_scroll + maxRows) do
+            local r = recs[i]
+            btn(mon, rightX + 1, y, 7, "КРАФТ", "REC_CRAFT:" .. r.name, C.tab_on, colors.white)
+            textAt(mon, rightX + 9, y, string.format("%-16s x%d", shortName(r.name, 16), r.output_count),
+                C.text, C.panel)
+            btn(mon, w - 4, y, 3, " X", "REC_DEL:" .. r.name, C.bad, colors.white)
+            y = y + 1
+        end
+
+        if #recs == 0 then
+            textAt(mon, rightX + 1, 8, "Рецептов нет.", C.bad, C.panel)
+            textAt(mon, rightX + 1, 9, "Сделайте ТЕСТ КРАФТА", C.muted, C.panel)
+            textAt(mon, rightX + 1, 10, "и сохраните результат.", C.muted, C.panel)
         end
     end
-    
-    -- Draw arrow and output
-    mon.setCursorPos(x + 13, y + 2)
-    mon.write("=>")
-    mon.setCursorPos(x + 16, y + 2)
-    if out_item then
-        local short = clean_name(out_item):sub(1, 3):upper()
-        mon.write("[" .. short .. "]")
+end
+
+----------------------------------------------------------------------
+-- Tab: Settings
+----------------------------------------------------------------------
+local function drawConf(mon, w, h)
+    box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
+    textAt(mon, 3, 6, "ВЫБОР СУНДУКА-СКАНЕРА", C.title, C.panel)
+    textAt(mon, 3, 7, "(служит для записи рецептов; исключается из склада)", C.muted, C.panel)
+
+    btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
+    btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
+
+    local invs = util.getInventories()
+    table.sort(invs)
+
+    local maxRows = math.floor((h - 10) / 1)
+    local y = 9
+    for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + maxRows) do
+        local name = invs[i]
+        local role = roleOf(name)
+        local isScanner = (name == _G.GRID_NAME)
+
+        local label = "ВЫБРАТЬ"
+        local bg = isScanner and C.ok or C.tab_off
+        if role ~= "СКЛАД" and not isScanner then
+            label = role
+            bg = C.muted
+        end
+        btn(mon, 4, y, 12, isScanner and "[ СКАНЕР ]" or label,
+            "SET_GRID:" .. name, bg,
+            isScanner and colors.black or colors.white)
+
+        textAt(mon, 18, y, string.format("%-26s", shortName(name, 26)), C.text, C.panel)
+        textAt(mon, 46, y, "[" .. role .. "]", isScanner and C.ok or C.muted, C.panel)
+        y = y + 1
+        if y > h - 3 then break end
+    end
+
+    if #invs == 0 then
+        textAt(mon, 4, 10, "Инвентари не найдены!", C.bad, C.panel)
+        textAt(mon, 4, 11, "Подключите сундуки к проводной сети Core.", C.muted, C.panel)
+    end
+end
+
+----------------------------------------------------------------------
+-- Modals
+----------------------------------------------------------------------
+local function drawCraftModal(mon, w, h)
+    local mw, mh = math.min(52, w - 4), math.min(20, h - 4)
+    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
+
+    local options = recipes.get(ui.modal.name)
+    local recipe = options and options[1]
+    local outCount = recipe and recipe.output_count or 1
+    local batches = math.ceil(ui.modal.count / outCount)
+    local totalOutput = batches * outCount
+
+    box(mon, mx, my, mw, mh, C.bg, C.tab_on)
+    textAt(mon, mx + 2, my + 1, "ЗАКАЗ АВТОКРАФТА", C.title, C.bg)
+    textAt(mon, mx + 2, my + 3, "Предмет: " .. shortName(ui.modal.name, mw - 12), C.text, C.bg)
+    textAt(mon, mx + 2, my + 4,
+        string.format("Выход рецепта: x%d  ->  будет изготовлено: x%d", outCount, totalOutput),
+        C.muted, C.bg)
+
+    textAt(mon, mx + 2, my + 6, "Количество: ", C.text, C.bg)
+    textAt(mon, mx + 14, my + 6, tostring(ui.modal.count), C.title, C.bg)
+
+    btn(mon, mx + 2,  my + 8, 5, "-1",  "DEC:1",  C.tab_off, colors.white)
+    btn(mon, mx + 8,  my + 8, 5, "-10", "DEC:10", C.tab_off, colors.white)
+    btn(mon, mx + 14, my + 8, 5, "-64", "DEC:64", C.tab_off, colors.white)
+    btn(mon, mx + mw - 19, my + 8, 5, "+1",  "INC:1",  C.tab_off, colors.white)
+    btn(mon, mx + mw - 13, my + 8, 5, "+10", "INC:10", C.tab_off, colors.white)
+    btn(mon, mx + mw - 7,  my + 8, 5, "+64", "INC:64", C.tab_off, colors.white)
+
+    textAt(mon, mx + 2, my + 10, "Ингредиенты (есть / нужно):", C.muted, C.bg)
+
+    -- Feasibility summary line (can the whole craft, incl. sub-recipes, be done?)
+    if ui.modal.feasible_ok ~= nil then
+        local fmsg = ui.modal.feasible_ok and "Можно изготовить: ДА" or ("Нельзя: " .. tostring(ui.modal.feasible_msg))
+        textAt(mon, mx + 2, my + mh - 5, fmsg:sub(1, mw - 4),
+            ui.modal.feasible_ok and C.ok or C.warn, C.bg)
+    end
+
+    if recipe then
+        local grouped = groupIngredients(recipe.ingredients)
+        local iy = my + 11
+        for _, ing in ipairs(grouped) do
+            local needed = ing.count * batches
+            local avail = storage.getAvailable(ing.name)
+            local color = (avail >= needed) and C.ok or C.bad
+            textAt(mon, mx + 2, iy,
+                string.format("- %-20s : %d / %d", shortName(ing.name, 20), avail, needed),
+                color, C.bg)
+            iy = iy + 1
+            if iy > my + mh - 6 then break end
+        end
     else
-        mon.write("[ ? ]")
+        textAt(mon, mx + 2, my + 11, "Рецепт не найден! Сохраните его через ТЕСТ КРАФТА.", C.bad, C.bg)
+    end
+
+    if ui.modal.error then
+        textAt(mon, mx + 2, my + mh - 3, ui.modal.error:sub(1, mw - 4), C.bad, C.bg)
+    end
+
+    btn(mon, mx + 2, my + mh - 2, 18, "ЗАПУСТИТЬ КРАФТ", "CRAFT_OK", C.ok, colors.white)
+    btn(mon, mx + mw - 14, my + mh - 2, 12, "ОТМЕНА", "CRAFT_CANCEL", C.tab_off, colors.white)
+end
+
+local function drawRecipeSuccessModal(mon, w, h)
+    local mw, mh = 48, 14
+    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
+    box(mon, mx, my, mw, mh, C.bg, C.ok)
+
+    textAt(mon, mx + 2, my + 2, "ТЕСТ КРАФТА УСПЕШЕН!", C.ok, C.bg)
+    textAt(mon, mx + 2, my + 4,
+        "Получено: " .. shortName(ui.modal.data.output.name, 24) .. " x" .. ui.modal.data.output.count,
+        C.text, C.bg)
+    textAt(mon, mx + 2, my + 6, "Ингредиенты распознаны.", C.muted, C.bg)
+    textAt(mon, mx + 2, my + 7, "Результат в слоте 16 сканера.", C.muted, C.bg)
+    textAt(mon, mx + 2, my + 9, "Сохранить рецепт в базу?", C.text, C.bg)
+
+    btn(mon, mx + 2, my + mh - 2, 18, "СОХРАНИТЬ", "SAVE_OK", C.ok, colors.white)
+    btn(mon, mx + mw - 14, my + mh - 2, 12, "ОТМЕНА", "SAVE_CANCEL", C.tab_off, colors.white)
+end
+
+local function drawRecipeFailModal(mon, w, h)
+    local mw, mh = 48, 12
+    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
+    box(mon, mx, my, mw, mh, C.bg, C.bad)
+
+    textAt(mon, mx + 2, my + 2, "ОШИБКА ТЕСТА КРАФТА", C.bad, C.bg)
+    textAt(mon, mx + 2, my + 5, "Причина: " .. tostring(ui.modal.error):sub(1, mw - 12), C.text, C.bg)
+    btn(mon, mx + math.floor((mw - 12) / 2), my + mh - 2, 12, "ЗАКРЫТЬ", "ERR_CLOSE", C.bad, colors.white)
+end
+
+local function drawModal(mon, w, h)
+    if not ui.modal then return end
+    if ui.modal.type == "CRAFT" then
+        drawCraftModal(mon, w, h)
+    elseif ui.modal.type == "RECIPE_SUCCESS" then
+        drawRecipeSuccessModal(mon, w, h)
+    elseif ui.modal.type == "RECIPE_FAILED" then
+        drawRecipeFailModal(mon, w, h)
     end
 end
 
-local function draw_header(mon, w, h)
-    rect(mon, 1, 1, w, 3, colors.gray)
-    mon.setTextColor(colors.white)
-    mon.setCursorPos(2, 2)
-    mon.write("CC-AUTOCRAFT 2.0")
-    
-    local tabs = {
-        {id="DASH", text="ГЛАВНАЯ"},
-        {id="STORAGE", text="СКЛАД"},
-        {id="RECIPE", text="РЕЦЕПТЫ"},
-        {id="CONF", text="НАСТРОЙКИ"}
-    }
-    local tw = 12
-    for i, t in ipairs(tabs) do
-        draw_small_btn(mon, w - (5-i)*tw - (5-i)*2, 2, tw, t.text, t.id, ui.tab == t.id and colors.blue or colors.gray, colors.white)
-    end
-end
-
+----------------------------------------------------------------------
+-- Main draw
+----------------------------------------------------------------------
 function ui.draw(monName)
     local mon = peripheral.wrap(monName)
     if not mon then return end
     ui.btns = {}
     mon.setTextScale(0.5)
     local w, h = mon.getSize()
-    
-    rect(mon, 1, 1, w, h, colors.black)
-    draw_header(mon, w, h)
+
+    fill(mon, 1, 1, w, h, C.bg)
+    drawHeader(mon, w)
+    drawStatus(mon, w)
 
     if ui.modal then
-        ui.draw_modal(mon, w, h)
+        drawModal(mon, w, h)
         return
     end
 
     if ui.tab == "DASH" then
-        -- Left Panel: Workers
-        rect(mon, 2, 5, 23, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(3, 6)
-        mon.write("ЧЕРЕПАХИ (ВОРКЕРЫ)")
-        
-        local y = 8
-        for id, info in pairs(dispatcher.workers) do
-            mon.setCursorPos(3, y)
-            if info.status == "IDLE" then
-                mon.setTextColor(colors.green)
-                mon.write(string.format("#%d [СВОБОДЕН]", id))
-            elseif info.status == "CRAFTING" then
-                mon.setTextColor(colors.orange)
-                mon.write(string.format("#%d [КРАФТИТ]", id))
-            elseif info.status == "TESTING" then
-                mon.setTextColor(colors.yellow)
-                mon.write(string.format("#%d [ТЕСТ]", id))
-            else
-                mon.setTextColor(colors.red)
-                mon.write(string.format("#%d [%s]", id, info.status))
-            end
-            y = y + 1
-            if y > h-2 then break end
-        end
-
-        -- Right Panel: Crafting Queue
-        rect(mon, 27, 5, w-28, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(28, 6)
-        mon.write("ОЧЕРЕДЬ ЗАДАЧ")
-        
-        -- Reset Queue button
-        draw_small_btn(mon, w - 12, 6, 10, "СБРОС", "CLEAR_QUEUE", colors.red, colors.white)
-        
-        local y = 8
-        for i = #dispatcher.queue, 1, -1 do
-            local t = dispatcher.queue[i]
-            mon.setCursorPos(28, y)
-            if t.status == "COMPLETED" then
-                mon.setTextColor(colors.gray)
-                mon.write(string.format("[+] %-16s x%d (ОК)", clean_name(t.name), t.count))
-            elseif t.status == "FAILED" then
-                mon.setTextColor(colors.red)
-                mon.write(string.format("[!] %-16s x%d (ОШИБКА)", clean_name(t.name), t.count))
-            elseif t.status == "ACTIVE" then
-                mon.setTextColor(colors.blue)
-                mon.write(string.format("[>] %-16s x%d (АКТИВЕН)", clean_name(t.name), t.count))
-            else
-                mon.setTextColor(colors.white)
-                mon.write(string.format("[-] %-16s x%d (ОЖИДАНИЕ)", clean_name(t.name), t.count))
-            end
-            y = y + 1
-            if y > h-2 then break end
-        end
-
+        drawDash(mon, w, h)
     elseif ui.tab == "STORAGE" then
-        -- Storage display with full lists and scrolling
-        rect(mon, 2, 5, w-11, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(3, 6)
-        mon.write("ДОСТУПНЫЕ ПРЕДМЕТЫ НА СКЛАДЕ")
-
-        -- Get and sort items
-        local items = {}
-        for name, qty in pairs(storage.cache) do
-            table.insert(items, {name = name, qty = qty})
-        end
-        table.sort(items, function(a, b) return a.name < b.name end)
-
-        -- Scroll buttons on the far right
-        draw_small_btn(mon, w - 8, 5, 7, "/\\ UP", "SCROLL_UP", colors.gray, colors.white)
-        draw_small_btn(mon, w - 8, h - 3, 7, "\\/ DN", "SCROLL_DOWN", colors.gray, colors.white)
-
-        local max_display = h - 9
-        local y = 8
-        for i = ui.scroll + 1, math.min(#items, ui.scroll + max_display) do
-            local item = items[i]
-            
-            -- Draw order button
-            draw_small_btn(mon, 4, y, 7, "ЗАКАЗ", "CRAFT_INIT:" .. item.name, colors.blue, colors.white)
-
-            mon.setBackgroundColor(colors.black)
-            mon.setTextColor(colors.white)
-            mon.setCursorPos(13, y)
-            mon.write(string.format("%-22s  x%d", clean_name(item.name), item.qty))
-            y = y + 1
-        end
-
-        if #items == 0 then
-            mon.setCursorPos(4, 9)
-            mon.setTextColor(colors.red)
-            mon.write("Склад пуст! Подключите сундуки к сети.")
-        end
-
+        drawStorage(mon, w, h)
     elseif ui.tab == "RECIPE" then
-        -- Left Panel: Recipe Grid Info
-        rect(mon, 2, 5, 24, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(3, 6)
-        mon.write("СЕТКА КРАФТА 3х3")
-        
-        draw_grid_preview(mon, 4, 8)
-        
-        draw_small_btn(mon, 3, 16, 22, "ТЕСТ И ЗАПИСЬ", "TEST_CRAFT_INIT", colors.blue, colors.white)
-        
-        -- Right Panel: Known Recipes
-        rect(mon, 28, 5, w-37, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(29, 6)
-        mon.write("БАЗА ИЗВЕСТНЫХ РЕЦЕПТОВ")
-        
-        -- Get sorted recipes
-        local recipe_list = {}
-        for name, data in pairs(recipes.data) do
-            table.insert(recipe_list, {name = name, data = data})
-        end
-        table.sort(recipe_list, function(a, b) return a.name < b.name end)
-        
-        -- Scroll buttons for recipes
-        draw_small_btn(mon, w - 8, 5, 7, "/\\ UP", "RECIPE_SCROLL_UP", colors.gray, colors.white)
-        draw_small_btn(mon, w - 8, h - 3, 7, "\\/ DN", "RECIPE_SCROLL_DOWN", colors.gray, colors.white)
-        
-        local max_display = h - 9
-        local y = 8
-        for i = ui.recipe_scroll + 1, math.min(#recipe_list, ui.recipe_scroll + max_display) do
-            local rec = recipe_list[i]
-            mon.setCursorPos(29, y)
-            mon.setTextColor(colors.white)
-            mon.write(string.format("> %-14s x%d", clean_name(rec.name):sub(1, 14), rec.data.output_count or 1))
-            
-            -- Delete button [X]
-            draw_small_btn(mon, w - 13, y, 3, "X", "DELETE_RECIPE:" .. rec.name, colors.red, colors.white)
-            y = y + 1
-        end
-
+        drawRecipe(mon, w, h)
     elseif ui.tab == "CONF" then
-        -- Settings tab
-        rect(mon, 2, 5, w-11, h-6, colors.black, colors.gray)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        mon.setCursorPos(3, 6)
-        mon.write("ВЫБЕРИТЕ СУНДУК-СКАНЕР ДЛЯ РЕЦЕПТОВ:")
-        
-        -- Get all inventories
-        local inventories = {}
-        local names = peripheral.getNames()
-        for _, name in ipairs(names) do
-            if peripheral.getType(name) == "inventory" or peripheral.hasType(name, "inventory") then
-                if not storage.buffers[name] then
-                    table.insert(inventories, name)
-                end
-            end
-        end
-        table.sort(inventories)
-        
-        -- Scroll buttons
-        draw_small_btn(mon, w - 8, 5, 7, "/\\ UP", "SCROLL_UP", colors.gray, colors.white)
-        draw_small_btn(mon, w - 8, h - 3, 7, "\\/ DN", "SCROLL_DOWN", colors.gray, colors.white)
-        
-        local max_display = math.floor((h - 9) / 2)
-        local y = 8
-        for i = ui.scroll + 1, math.min(#inventories, ui.scroll + max_display) do
-            local name = inventories[i]
-            local active = (_G.GRID_NAME == name)
-            
-            local btn_bg = active and colors.blue or colors.gray
-            local btn_fg = colors.white
-            
-            draw_small_btn(mon, 4, y, 24, name, "SET_GRID:" .. name, btn_bg, btn_fg)
-            
-            mon.setBackgroundColor(colors.black)
-            mon.setTextColor(colors.white)
-            mon.setCursorPos(30, y)
-            if active then
-                mon.setTextColor(colors.green)
-                mon.write("[АКТИВНЫЙ СКАНЕР]")
-            else
-                mon.setTextColor(colors.gray)
-                mon.write("[ДОСТУПЕН]")
-            end
-            
-            y = y + 2
-        end
-        
-        if #inventories == 0 then
-            mon.setCursorPos(4, 9)
-            mon.setTextColor(colors.red)
-            mon.write("Инвентари не найдены!")
-        end
+        drawConf(mon, w, h)
     end
 end
 
-function ui.draw_modal(mon, w, h)
-    local mw, mh = 46, 18
-    local mx, my = math.floor((w-mw)/2), math.floor((h-mh)/2)
-    
-    if ui.modal.type == "CRAFT" then
-        local options = recipes.get(ui.modal.name)
-        local recipe = options and options[1]
-        local out_count = recipe and recipe.output_count or 1
-        local batches = math.ceil(ui.modal.count / out_count)
-        local total_output = batches * out_count
-        
-        rect(mon, mx, my, mw, mh, colors.black, colors.blue)
-        mon.setTextColor(colors.cyan)
-        mon.setBackgroundColor(colors.black)
-        
-        mon.setCursorPos(mx+2, my+1)
-        mon.write("ЗАКАЗАТЬ АВТОКРАФТ")
-        
-        mon.setTextColor(colors.white)
-        mon.setCursorPos(mx+2, my+3)
-        mon.write("Предмет: " .. clean_name(ui.modal.name))
-        
-        mon.setTextColor(colors.gray)
-        mon.setCursorPos(mx+2, my+4)
-        mon.write(string.format("Выход рецепта: x%d (Будет изготовлено: x%d)", out_count, total_output))
-        
-        mon.setTextColor(colors.white)
-        mon.setCursorPos(mx+2, my+6)
-        mon.write("Количество: ")
-        mon.setTextColor(colors.cyan)
-        mon.write(tostring(ui.modal.count))
-        
-        -- Draw count adjustment buttons
-        draw_small_btn(mon, mx+2, my+8, 5, "-1", "DEC:1", colors.gray, colors.white)
-        draw_small_btn(mon, mx+8, my+8, 5, "-10", "DEC:10", colors.gray, colors.white)
-        draw_small_btn(mon, mx+14, my+8, 5, "-64", "DEC:64", colors.gray, colors.white)
-        
-        draw_small_btn(mon, mx+mw-19, my+8, 5, "+1", "INC:1", colors.gray, colors.white)
-        draw_small_btn(mon, mx+mw-13, my+8, 5, "+10", "INC:10", colors.gray, colors.white)
-        draw_small_btn(mon, mx+mw-7, my+8, 5, "+64", "INC:64", colors.gray, colors.white)
-        
-        -- Ingredients list title
-        mon.setTextColor(colors.lightGray)
-        mon.setCursorPos(mx+2, my+10)
-        mon.write("Ингредиенты (Доступно / Нужно):")
-        
-        -- List unique ingredients
-        if recipe then
-            local grouped = group_ingredients(recipe.ingredients)
-            local ing_y = my + 11
-            for _, ing in ipairs(grouped) do
-                local total_needed = ing.count * batches
-                local available = storage.getAvailable(ing.name)
-                
-                mon.setCursorPos(mx+2, ing_y)
-                if available >= total_needed then
-                    mon.setTextColor(colors.green)
-                else
-                    mon.setTextColor(colors.red)
-                end
-                
-                mon.write(string.format("- %-18s : %d / %d", clean_name(ing.name):sub(1, 18), available, total_needed))
-                ing_y = ing_y + 1
-                if ing_y > my+14 then break end
-            end
-        else
-            mon.setCursorPos(mx+2, my+11)
-            mon.setTextColor(colors.red)
-            mon.write("Рецепт отсутствует!")
-        end
-        
-        if ui.modal.error then
-            mon.setCursorPos(mx+2, my+15)
-            mon.setTextColor(colors.red)
-            mon.write(ui.modal.error:sub(1, mw-4))
-        end
-        
-        draw_small_btn(mon, mx+2, my+mh-2, 16, "ЗАПУСТИТЬ КРАФТ", "CRAFT_START_OK", colors.blue, colors.white)
-        draw_small_btn(mon, mx+mw-14, my+mh-2, 12, "ОТМЕНА", "CRAFT_CANCEL", colors.gray, colors.white)
-        
-    elseif ui.modal.type == "RECIPE_SUCCESS" then
-        rect(mon, mx, my, mw, mh, colors.black, colors.green)
-        mon.setTextColor(colors.green)
-        mon.setBackgroundColor(colors.black)
-        
-        mon.setCursorPos(mx+2, my+2)
-        mon.write("ТЕСТ КРАФТА УСПЕШЕН!")
-        
-        mon.setTextColor(colors.white)
-        mon.setCursorPos(mx+2, my+4)
-        mon.write("Получено: " .. clean_name(ui.modal.data.output.name) .. " x" .. ui.modal.data.output.count)
-        
-        mon.setCursorPos(mx+2, my+6)
-        mon.write("Ингредиенты распознаны.")
-        mon.setCursorPos(mx+2, my+7)
-        mon.write("Записать рецепт в память?")
-        
-        draw_small_btn(mon, mx+2, my+11, 16, "СОХРАНИТЬ РЕЦЕПТ", "SAVE_RECIPE_OK", colors.green, colors.white)
-        draw_small_btn(mon, mx+mw-14, my+11, 12, "ОТМЕНИТЬ", "SAVE_RECIPE_CANCEL", colors.gray, colors.white)
-        
-    elseif ui.modal.type == "RECIPE_FAILED" then
-        rect(mon, mx, my, mw, mh, colors.black, colors.red)
-        mon.setTextColor(colors.red)
-        mon.setBackgroundColor(colors.black)
-        
-        mon.setCursorPos(mx+2, my+2)
-        mon.write("ОШИБКА ТЕСТА КРАФТА!")
-        
-        mon.setTextColor(colors.white)
-        mon.setCursorPos(mx+2, my+5)
-        mon.write("Причина: " .. tostring(ui.modal.error))
-        
-        draw_small_btn(mon, mx+math.floor((mw-10)/2), my+11, 10, "ЗАКРЫТЬ", "REC_ERR_CLOSE", colors.red, colors.white)
-    end
-end
-
+-- Reverse-order hit test so modal buttons (drawn last) win over background.
 function ui.touch(x, y)
-    for _, b in ipairs(ui.btns) do
-        if x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2 then return b.id end
+    for i = #ui.btns, 1, -1 do
+        local b = ui.btns[i]
+        if x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2 then
+            return b.id
+        end
     end
+    return nil
 end
 
 return ui

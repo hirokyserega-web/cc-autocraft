@@ -9,6 +9,10 @@ function util.deepCopy(obj)
 end
 
 function util.save(path, data)
+    if not fs.exists(path) then
+        local dir = path:match("(.+)/")
+        if dir and not fs.exists(dir) then fs.makeDir(dir) end
+    end
     local f = fs.open(path, "w")
     if f then
         f.write(textutils.serialize(data))
@@ -31,21 +35,46 @@ end
 
 function util.log(msg, level)
     level = level or "INFO"
-    print(("[%s] %s"):format(level, msg))
+    local line = ("[%s] %s"):format(level, msg)
+    print(line)
     local f = fs.open("latest.log", "a")
     if f then
-        f.writeLine(("[%s] %s"):format(level, msg))
+        f.writeLine(line)
         f.close()
     end
 end
 
--- Безопасная сериализация без циклов
-function util.safeSerialize(data)
-    local ok, res = pcall(textutils.serialize, data, { allow_repetitions = true })
-    if ok then return res end
-    -- Fallback: упрощенная копия без вложенности если упало
-    util.log("Serialization failed, attempting fallback", "WARN")
-    return textutils.serialize(tostring(data))
+-- Robust inventory detection that works on every CC:T version.
+-- Older versions do not have peripheral.hasType, and peripheral.getType
+-- returns the concrete type ("chest") rather than "inventory", so checking
+-- for the inventory API methods (list + size) is the only reliable way.
+function util.isInventory(name)
+    if not name then return false end
+    local p = peripheral.wrap(name)
+    if not p then return false end
+    -- Detect by capability, not by type string: getType returns "chest" (not
+    -- "inventory"), and peripheral.hasType is missing on older CC:T builds and
+    -- would crash when called as nil. Every inventory exposes list() + size().
+    return type(p.list) == "function" and type(p.size) == "function"
+end
+
+-- Return a sorted list of every inventory peripheral name on the network.
+function util.getInventories()
+    local list = {}
+    local names = peripheral.getNames()
+    for _, name in ipairs(names) do
+        if util.isInventory(name) then
+            table.insert(list, name)
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+-- Shorten "minecraft:iron_ingot" -> "iron_ingot"
+function util.cleanName(name)
+    if not name then return "" end
+    return name:match(":(.+)") or name
 end
 
 return util

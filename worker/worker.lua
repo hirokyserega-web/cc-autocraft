@@ -1,31 +1,40 @@
+-- Worker (turtle) loop: receives craft requests, pulls ingredients from the
+-- adjacent input chest into its 3x3 craft grid, crafts, pushes results to the
+-- adjacent output chest, and reports back to Core.
 local net = require("lib.net")
 local worker = { id = os.getComputerID(), status = "IDLE", core_id = nil }
 
+-- Map the input chest's central 3x3 (slots 4,5,6 / 13,14,15 / 22,23,24) onto
+-- the turtle's 3x3 craft grid (slots 1,2,3 / 5,6,7 / 9,10,11).
 local slot_map = {
-    [4] = 1,  [5] = 2,  [6] = 3,
-    [13] = 5, [14] = 6, [15] = 7,
-    [22] = 9, [23] = 10, [24] = 11
+    [4]  = 1,  [5]  = 2,  [6]  = 3,
+    [13] = 5,  [14] = 6,  [15] = 7,
+    [22] = 9,  [23] = 10, [24] = 11
 }
 
 local function opposite_side(side)
     local opp = {
-        down = "up",
-        up = "down",
-        front = "back",
-        back = "front",
-        left = "right",
-        right = "left"
+        down = "up", up = "down",
+        front = "back", back = "front",
+        left = "right", right = "left"
     }
     return opp[side] or "up"
 end
 
+-- Robust inventory detection on a side (works on every CC:T version).
+local function isInventorySide(side)
+    if not peripheral.isPresent(side) then return false end
+    local p = peripheral.wrap(side)
+    if not p then return false end
+    return type(p.list) == "function" and type(p.size) == "function"
+end
+
+-- Find two adjacent inventories: first found = input, second = output.
 local function get_adjacent_chests()
-    local sides = {"down", "up", "front", "back", "left", "right"}
-    local input_chest, output_chest
-    local input_side, output_side
-    
+    local sides = { "down", "up", "front", "back", "left", "right" }
+    local input_chest, input_side, output_chest, output_side
     for _, side in ipairs(sides) do
-        if peripheral.isPresent(side) and (peripheral.getType(side) == "inventory" or peripheral.hasType(side, "inventory")) then
+        if isInventorySide(side) then
             if not input_chest then
                 input_chest = peripheral.wrap(side)
                 input_side = side
@@ -57,63 +66,69 @@ function worker.loop()
     while true do
         if not worker.core_id then
             print("Seeking Core...")
-            net.broadcast("DISCOVER", {id = worker.id})
+            net.broadcast("DISCOVER", { id = worker.id })
         end
-        
+
         local id, type, data = net.receive(3)
         if id and type == "DISCOVER_ACK" then
             worker.core_id = id
             print("Connected to Core: " .. id)
+
         elseif type == "CRAFT_REQUEST" or type == "TEST_CRAFT" then
             worker.status = (type == "TEST_CRAFT") and "TESTING" or "CRAFTING"
             if worker.core_id then
-                net.send(worker.core_id, "HEARTBEAT", {status = worker.status})
+                net.send(worker.core_id, "HEARTBEAT", { status = worker.status })
             end
-            
-            local action_name = (type == "TEST_CRAFT") and "testing craft" or "crafting " .. tostring(data.name)
-            print("Worker status: " .. action_name)
-            
+
+            local action = (type == "TEST_CRAFT") and "testing craft" or ("crafting " .. tostring(data.name))
+            print("Worker: " .. action)
+
             local input, input_side, output, output_side = get_adjacent_chests()
             if not input or not output then
-                print("Error: missing adjacent input/output chest!")
-                net.send(worker.core_id, "RESULT", {
-                    task_id = data.id,
-                    success = false,
-                    error = "Worker lacks 2 adjacent chests (IN and OUT)"
-                })
+                print("Error: need 2 adjacent chests (IN and OUT)")
+                if worker.core_id then
+                    net.send(worker.core_id, "RESULT", {
+                        task_id = data.id,
+                        success = false,
+                        error = "У воркера нет 2 соседних сундуков (вход и выход)"
+                    })
+                end
             else
                 local opp_input = opposite_side(input_side)
                 local opp_output = opposite_side(output_side)
-                
-                -- 1. Clear turtle inventory first
+
+                -- 1. Clear turtle inventory into the output chest.
                 push_all_to_output(output, opp_output)
-                
-                -- 2. Pull ingredients from input chest
+
+                -- 2. Pull ingredients from the input chest's central 3x3 into
+                --    the turtle's craft grid, `batches` items per cell.
                 local batches = data.batches or 1
                 for chest_slot, turtle_slot in pairs(slot_map) do
                     input.pushItems(opp_input, chest_slot, batches, turtle_slot)
                 end
-                
-                -- 3. Perform turtle craft
+
+                -- 3. Craft.
                 print("Running turtle.craft()...")
                 local success, err = turtle.craft()
-                
-                -- 4. Push results (and leftover ingredients) to output chest
+
+                -- 4. Push everything (result + leftovers) to the output chest.
                 push_all_to_output(output, opp_output)
-                
+
                 print("Finish: success=" .. tostring(success) .. (err and (", err=" .. err) or ""))
-                net.send(worker.core_id, "RESULT", {
-                    task_id = data.id,
-                    success = success,
-                    error = err
-                })
+                if worker.core_id then
+                    net.send(worker.core_id, "RESULT", {
+                        task_id = data.id,
+                        success = success,
+                        error = err
+                    })
+                end
             end
-            
+
             worker.status = "IDLE"
         end
-        
+
         if worker.core_id then
-            net.send(worker.core_id, "HEARTBEAT", {status = worker.status})
+            net.send(worker.core_id, "HEARTBEAT", { status = worker.status })
         end
         os.sleep(0.5)
     end

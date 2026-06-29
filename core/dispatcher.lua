@@ -3,8 +3,8 @@ local dispatcher = {}
 local util = require("lib.util")
 local storage = require("core.storage")
 
-dispatcher.queue = {} -- [ {id, name, count, recipe, status} ]
-dispatcher.workers = {} -- { [id] = { status, task_id, buffers={input, output} } }
+dispatcher.queue = {}    -- [ {id, name, count, recipe, batches, status, plan_id, order, error} ]
+dispatcher.workers = {}  -- { [id] = { status, task_id, buffers={input, output} } }
 dispatcher.PATH = "data/dispatcher.dat"
 
 function dispatcher.save()
@@ -34,120 +34,125 @@ function dispatcher.load()
     dispatcher.updateStorageBuffers()
 end
 
--- Автоматическое назначение буферов
+-- Auto-assign two free inventory chests as this worker's input/output buffers.
 function dispatcher.autoAssignBuffers(workerId)
     if not dispatcher.workers[workerId] then
         dispatcher.workers[workerId] = { status = "IDLE" }
     end
-    
-    if not dispatcher.workers[workerId].buffers then
-        -- Ищем свободные сундуки
-        storage.refresh()
-        local available = {}
-        
-        -- Get names of all inventory peripherals
-        local names = peripheral.getNames()
-        for _, name in ipairs(names) do
-            if peripheral.getType(name) == "inventory" or peripheral.hasType(name, "inventory") then
-                -- Check if it is already assigned as a buffer to ANY worker
-                local isAssigned = false
-                for _, w in pairs(dispatcher.workers) do
-                    if w.buffers and (w.buffers.input == name or w.buffers.output == name) then
-                        isAssigned = true
-                        break
-                    end
-                end
-                -- Also skip active recipe grid chest
-                if name == _G.GRID_NAME then
+
+    if dispatcher.workers[workerId].buffers then
+        -- Make sure those chests still exist.
+        local b = dispatcher.workers[workerId].buffers
+        if util.isInventory(b.input) and util.isInventory(b.output) then
+            dispatcher.updateStorageBuffers()
+            return true
+        end
+        dispatcher.workers[workerId].buffers = nil
+    end
+
+    local available = {}
+    local names = peripheral.getNames()
+    for _, name in ipairs(names) do
+        if util.isInventory(name) and name ~= _G.GRID_NAME then
+            local isAssigned = false
+            for _, w in pairs(dispatcher.workers) do
+                if w.buffers and (w.buffers.input == name or w.buffers.output == name) then
                     isAssigned = true
-                end
-                
-                if not isAssigned then 
-                    table.insert(available, name) 
+                    break
                 end
             end
+            if not isAssigned then table.insert(available, name) end
         end
-        
-        if #available >= 2 then
-            dispatcher.workers[workerId].buffers = {
-                input = available[1],
-                output = available[2]
-            }
-            util.log("Assigned buffers to worker " .. workerId .. ": IN=" .. available[1] .. " OUT=" .. available[2])
-            dispatcher.updateStorageBuffers()
-            dispatcher.save()
-        else
-            return false, "Not enough free chests for buffers"
+    end
+
+    if #available >= 2 then
+        dispatcher.workers[workerId].buffers = {
+            input = available[1],
+            output = available[2]
+        }
+        util.log("Assigned buffers to worker " .. workerId .. ": IN=" .. available[1] .. " OUT=" .. available[2])
+        dispatcher.updateStorageBuffers()
+        dispatcher.save()
+        return true
+    end
+    return false, "Недостаточно свободных сундуков для буферов (нужно 2)"
+end
+
+function dispatcher.addTask(task)
+    task.id = task.id or ("task_" .. os.epoch("utc") .. "_" .. math.random(1000, 9999))
+    task.status = task.status or "PENDING"
+    table.insert(dispatcher.queue, task)
+    dispatcher.save()
+end
+
+-- A task is ready to run only if every earlier task in the same plan is done.
+-- This serializes a single plan (children before parents) while still letting
+-- independent plans run in parallel across workers.
+local function isReady(t)
+    if not t.plan_id then return true end
+    for _, other in ipairs(dispatcher.queue) do
+        if other.plan_id == t.plan_id
+            and other.order and t.order
+            and other.order < t.order
+            and other.status ~= "COMPLETED" then
+            return false
         end
     end
     return true
 end
 
-function dispatcher.addTask(task)
-    task.id = "task_" .. os.epoch("utc") .. "_" .. math.random(1000, 9999)
-    task.status = "PENDING"
-    table.insert(dispatcher.queue, task)
-    dispatcher.save()
-end
-
--- Prepare ingredients in the worker's input chest
+-- Move the recipe's ingredients from storage into the worker's input chest,
+-- each into the slot that matches the original grid layout (preserves shape).
 local function prepare_ingredients(task, worker)
     local recipe = task.recipe
     local batches = task.batches or 1
-    
-    -- First clear the input chest to be completely safe
+
+    -- Clear the input chest first.
     local in_p = peripheral.wrap(worker.buffers.input)
     if in_p then
-        for slot = 1, in_p.size() or 27 do
+        local size = in_p.size() or 27
+        for slot = 1, size do
             local item = in_p.getItemDetail(slot)
-            if item then
-                storage.deposit(worker.buffers.input, slot, item.count)
-            end
+            if item then storage.deposit(worker.buffers.input, slot, item.count) end
         end
     end
-    
-    -- Extract and place ingredients into correct slots
+
+    -- Group ingredients by (name, slot) so each grid cell is filled correctly.
     for _, ing in ipairs(recipe.ingredients) do
         local needed = (ing.count or 1) * batches
-        local extracted = storage.extract(ing.name, needed, worker.buffers.input, ing.slot)
+        local target_slot = ing.slot or 4
+        local extracted = storage.extract(ing.name, needed, worker.buffers.input, target_slot)
         if extracted < needed then
-            util.log("Error: could only extract " .. extracted .. "/" .. needed .. " of " .. ing.name)
+            util.log("WARN: extracted " .. extracted .. "/" .. needed .. " of " .. ing.name .. " for " .. task.name)
         end
     end
 end
 
--- Process the pending queue and dispatch tasks to IDLE workers
+-- Dispatch ready PENDING tasks to IDLE workers that have buffers.
 function dispatcher.processQueue()
     dispatcher.updateStorageBuffers()
-    storage.refresh()
-    
+
     local net = require("lib.net")
-    
+
     for workerId, worker in pairs(dispatcher.workers) do
         if worker.status == "IDLE" and worker.buffers then
-            -- Find the first pending task
             local pending_task = nil
             for _, t in ipairs(dispatcher.queue) do
-                if t.status == "PENDING" then
+                if t.status == "PENDING" and isReady(t) then
                     pending_task = t
                     break
                 end
             end
-            
+
             if pending_task then
-                util.log("Dispatching task " .. pending_task.name .. " to worker " .. workerId)
-                
-                -- Prepare the ingredients inside the worker's input chest
+                util.log("Dispatching " .. pending_task.name .. " x" .. pending_task.count .. " to worker " .. workerId)
                 prepare_ingredients(pending_task, worker)
-                
-                -- Set statuses
+
                 pending_task.status = "ACTIVE"
                 worker.status = "CRAFTING"
                 worker.task_id = pending_task.id
-                
                 dispatcher.save()
-                
-                -- Send craft request
+
                 net.send(workerId, "CRAFT_REQUEST", {
                     id = pending_task.id,
                     name = pending_task.name,
@@ -160,39 +165,34 @@ function dispatcher.processQueue()
     end
 end
 
--- Handle the result of a craft task
+-- Handle a finished craft task: deposit the output back into storage and
+-- release the raw-material reservations this task consumed.
 function dispatcher.handleResult(workerId, task_id, success, error_msg)
     local worker = dispatcher.workers[workerId]
     if not worker then return end
-    
-    -- Find the task
+
     local found_task = nil
     for _, t in ipairs(dispatcher.queue) do
-        if t.id == task_id then
-            found_task = t
-            break
-        end
+        if t.id == task_id then found_task = t break end
     end
-    
+
     if found_task then
         found_task.status = success and "COMPLETED" or "FAILED"
         found_task.error = error_msg
-        
-        -- Deposit all items from buffers.output back into general storage
+
+        -- Deposit everything in the output buffer back into general storage.
         if worker.buffers and worker.buffers.output then
             local out_p = peripheral.wrap(worker.buffers.output)
             if out_p then
                 local size = out_p.size() or 27
                 for slot = 1, size do
                     local item = out_p.getItemDetail(slot)
-                    if item then
-                        storage.deposit(worker.buffers.output, slot, item.count)
-                    end
+                    if item then storage.deposit(worker.buffers.output, slot, item.count) end
                 end
             end
         end
-        
-        -- Release reservations
+
+        -- Release reservations for the raw ingredients this task used.
         local recipe = found_task.recipe
         local batches = found_task.batches or 1
         for _, ing in ipairs(recipe.ingredients) do
@@ -200,17 +200,19 @@ function dispatcher.handleResult(workerId, task_id, success, error_msg)
             storage.release(ing.name, needed)
         end
     end
-    
-    -- Set worker back to idle
+
     worker.status = "IDLE"
     worker.task_id = nil
-    
-    -- Keep last 15 tasks in queue
-    while #dispatcher.queue > 15 do
+
+    -- Keep only the most recent 20 tasks in the queue.
+    while #dispatcher.queue > 20 do
         table.remove(dispatcher.queue, 1)
     end
-    
+
     dispatcher.save()
 end
+
+-- Exported for testing / reuse.
+dispatcher.isReady = isReady
 
 return dispatcher

@@ -1,103 +1,127 @@
--- Crafting planner
+-- Crafting planner: build a dependency-ordered task tree for an item and
+-- reserve the raw materials that must be pulled from storage.
 local planner = {}
 local recipes = require("core.recipes")
 local storage = require("core.storage")
 
-function planner.plan_recursive(itemName, count, tasks, reserves, planned)
-    tasks = tasks or {}
-    reserves = reserves or {}
-    planned = planned or {}
-    
-    -- Helper to calculate available quantity taking into account current temporary reserves and planned additions
-    local function get_temp_available(name)
-        local total_cached = storage.cache[name] or 0
-        local global_reserved = storage.reserved[name] or 0
-        local temp_reserved = reserves[name] or 0
-        local temp_planned = planned[name] or 0
-        return math.max(0, total_cached - (global_reserved + temp_reserved) + temp_planned)
-    end
-    
-    local avail = get_temp_available(itemName)
-    local needed = count - avail
-    
-    if needed <= 0 then
-        -- We have enough available (either in stock or planned)
-        reserves[itemName] = (reserves[itemName] or 0) + count
-        return true, tasks
-    end
-    
-    -- Reserve what is currently available
-    if avail > 0 then
-        reserves[itemName] = (reserves[itemName] or 0) + avail
-    end
-    
-    -- Find recipe for the remaining needed count
-    local options = recipes.get(itemName)
-    if not options or #options == 0 then
-        return false, "No recipe for " .. itemName
-    end
-    
-    local recipe = options[1]
-    local recipe_out_count = recipe.output_count or 1
-    local batches = math.ceil(needed / recipe_out_count)
-    
-    -- Plan all ingredients
-    for _, ing in ipairs(recipe.ingredients) do
-        -- For each ingredient, we need ing.count * batches
-        -- Default to count = 1 if not specified (since our grid has 1 item per slot)
-        local ing_count = ing.count or 1
-        local ok, err = planner.plan_recursive(ing.name, ing_count * batches, tasks, reserves, planned)
-        if not ok then
-            return false, err
-        end
-    end
-    
-    -- Mark the crafted items as planned additions
-    local total_crafted = batches * recipe_out_count
-    planned[itemName] = (planned[itemName] or 0) + total_crafted
-    
-    -- Reserve the needed amount from the newly planned items
-    reserves[itemName] = (reserves[itemName] or 0) + needed
-    
-    -- Add the crafting task
-    table.insert(tasks, {
-        id = "task_" .. os.epoch("utc") .. "_" .. math.random(1000, 9999),
-        name = itemName,
-        count = total_crafted,
-        recipe = recipe,
-        batches = batches,
-        status = "PENDING"
-    })
-    
-    return true, tasks
-end
-
--- Public planning interface
+-- Plan `count` of `itemName`.
+-- Returns: tasks (list, children-first), or nil, error_string
+-- Each task: { id, name, count, recipe, batches, status, plan_id, order }
 function planner.plan(itemName, count)
     local tasks = {}
-    local reserves = {}
-    local planned = {}
-    
-    local ok, err = planner.plan_recursive(itemName, count, tasks, reserves, planned)
-    if not ok then
-        return nil, err
+    local pulled = {}          -- raw materials pulled from storage during planning
+    local plan_id = "plan_" .. os.epoch("utc") .. "_" .. math.random(1000, 9999)
+
+    -- Available stock minus what we've already virtually pulled this plan.
+    local function localAvail(name)
+        return math.max(0, storage.getAvailable(name) - (pulled[name] or 0))
     end
-    
-    -- Apply global reservations
-    local reserved_so_far = {}
-    for name, qty in pairs(reserves) do
-        local success = storage.reserve(name, qty)
-        if not success then
-            -- Rollback
-            for r_name, r_qty in pairs(reserved_so_far) do
-                storage.release(r_name, r_qty)
-            end
-            return nil, "Failed to reserve ingredient: " .. name
+
+    -- Returns true, or false, error
+    local function recurse(name, need)
+        if need <= 0 then return true end
+
+        -- Pull as much as we can from existing stock.
+        local avail = localAvail(name)
+        local take = math.min(avail, need)
+        if take > 0 then
+            pulled[name] = (pulled[name] or 0) + take
+            need = need - take
         end
-        reserved_so_far[name] = qty
+        if need <= 0 then return true end
+
+        -- The rest must be crafted.
+        local options = recipes.get(name)
+        if not options or #options == 0 then
+            return false, "Нет рецепта для: " .. name
+        end
+
+        local recipe = options[1]
+        local out_count = recipe.output_count or 1
+        local batches = math.ceil(need / out_count)
+        local crafted = batches * out_count
+
+        -- Plan every ingredient (recursively). Group identical ingredients
+        -- first so e.g. "8 planks" becomes one craft request, not eight.
+        local grouped = {}
+        for _, ing in ipairs(recipe.ingredients) do
+            local n = ing.name
+            grouped[n] = (grouped[n] or 0) + (ing.count or 1)
+        end
+        for n, c in pairs(grouped) do
+            local ok, err = recurse(n, c * batches)
+            if not ok then return false, err end
+        end
+
+        table.insert(tasks, {
+            id = "task_" .. os.epoch("utc") .. "_" .. math.random(1000, 9999),
+            name = name,
+            count = crafted,
+            recipe = recipe,
+            batches = batches,
+            status = "PENDING",
+            plan_id = plan_id,
+            order = #tasks + 1
+        })
+        return true
     end
-    
+
+    local ok, err = recurse(itemName, count)
+    if not ok then return nil, err end
+
+    -- Commit the raw-material reservations to global storage.
+    local committed = {}
+    for name, qty in pairs(pulled) do
+        if not storage.reserve(name, qty) then
+            -- Rollback everything we reserved for this plan.
+            for rname, rqty in pairs(committed) do storage.release(rname, rqty) end
+            return nil, "Не удалось зарезервировать ресурс: " .. name
+        end
+        committed[name] = qty
+    end
+
     return tasks
+end
+
+-- Non-reserving feasibility check: can `count` of `itemName` be produced from
+-- current stock + known recipes? Returns true, or false, "missing ..." string.
+-- Does NOT reserve anything; safe to call for UI previews.
+function planner.check(itemName, count)
+    local pulled = {}
+    local missing = {}
+    local function localAvail(name)
+        return math.max(0, storage.getAvailable(name) - (pulled[name] or 0))
+    end
+    local function recurse(name, need)
+        if need <= 0 then return end
+        local take = math.min(localAvail(name), need)
+        if take > 0 then pulled[name] = (pulled[name] or 0) + take; need = need - take end
+        if need <= 0 then return end
+        local options = recipes.get(name)
+        if not options or #options == 0 then
+            missing[name] = (missing[name] or 0) + need
+            return
+        end
+        local recipe = options[1]
+        local out_count = recipe.output_count or 1
+        local batches = math.ceil(need / out_count)
+        local grouped = {}
+        for _, ing in ipairs(recipe.ingredients) do
+            grouped[ing.name] = (grouped[ing.name] or 0) + (ing.count or 1)
+        end
+        for n, c in pairs(grouped) do recurse(n, c * batches) end
+    end
+    recurse(itemName, count)
+    if next(missing) then
+        local list = {}
+        for n, q in pairs(missing) do
+            local short = n:match(":(.+)") or n
+            table.insert(list, short .. " x" .. q)
+        end
+        table.sort(list)
+        return false, "Не хватает: " .. table.concat(list, ", ")
+    end
+    return true
 end
 
 return planner
