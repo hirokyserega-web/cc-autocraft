@@ -90,7 +90,7 @@ function worker.loop()
                     net.send(worker.core_id, "RESULT", {
                         task_id = data.id,
                         success = false,
-                        error = "У воркера нет 2 соседних сундуков (вход и выход)"
+                        error = "Worker needs 2 adjacent chests (input and output)"
                     })
                 end
             else

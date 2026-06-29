@@ -10,8 +10,8 @@ function itemmatch.matches(item, spec)
     end
     
     if spec.tag then
-        -- В CC:T теги обычно приходят в детальном описании предмета
-        -- Здесь мы предполагаем, что item содержит поле tags
+        -- In CC:T tags usually arrive in the item detail
+        -- Here we assume the item has a tags field
         local hasTag = false
         if item.tags then
             for tag, _ in pairs(item.tags) do

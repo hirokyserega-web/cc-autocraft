@@ -1,5 +1,6 @@
 -- Monitor UI for cc-autocraft
 -- Clean, tabbed interface: Dashboard / Storage / Recipes / Settings.
+-- NOTE: ComputerCraft's font is ASCII-only; all on-screen text is English.
 local dispatcher = require("core.dispatcher")
 local storage = require("core.storage")
 local recipes = require("core.recipes")
@@ -82,11 +83,6 @@ local function btn(mon, x, y, w, label, id, bg, fg)
     table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, id = id })
 end
 
--- Register an invisible hit area over already-drawn text.
-local function hit(x, y, w, id)
-    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, id = id })
-end
-
 local function cleanName(name)
     if not name then return "" end
     return name:match(":(.+)") or name
@@ -112,14 +108,14 @@ end
 
 -- Detect inventory role for a peripheral name.
 local function roleOf(name)
-    if name == _G.GRID_NAME then return "СКАНЕР" end
+    if name == _G.GRID_NAME then return "SCANNER" end
     for _, w in pairs(dispatcher.workers) do
         if w.buffers then
-            if w.buffers.input == name then return "БУФЕР-ВХОД" end
-            if w.buffers.output == name then return "БУФЕР-ВЫХОД" end
+            if w.buffers.input == name then return "BUF-IN" end
+            if w.buffers.output == name then return "BUF-OUT" end
         end
     end
-    return "СКЛАД"
+    return "STORAGE"
 end
 
 ----------------------------------------------------------------------
@@ -130,12 +126,12 @@ local function drawHeader(mon, w)
     textAt(mon, 2, 2, "CC-AUTOCRAFT 2.0", C.title, C.header)
 
     local tabs = {
-        { id = "DASH",    text = "ГЛАВНАЯ" },
-        { id = "STORAGE", text = "СКЛАД" },
-        { id = "RECIPE",  text = "РЕЦЕПТЫ" },
-        { id = "CONF",    text = "НАСТРОЙКИ" }
+        { id = "DASH",    text = "HOME" },
+        { id = "STORAGE", text = "STORAGE" },
+        { id = "RECIPE",  text = "RECIPES" },
+        { id = "CONF",    text = "SETTINGS" }
     }
-    local tw = 12
+    local tw = 11
     local gap = 1
     local totalW = #tabs * tw + (#tabs - 1) * gap
     local startX = w - totalW - 1
@@ -157,8 +153,8 @@ local function drawStatus(mon, w)
         if t.status == "PENDING" or t.status == "ACTIVE" then pending = pending + 1 end
     end
 
-    local scanner = _G.GRID_NAME and cleanName(_G.GRID_NAME) or "НЕ ВЫБРАН"
-    local s = string.format(" Сканер: %-14s  Склад: %d предм.  Воркеры: %d  Очередь: %d",
+    local scanner = _G.GRID_NAME and cleanName(_G.GRID_NAME) or "NONE"
+    local s = string.format(" Scanner: %-14s  Items: %d  Workers: %d  Queue: %d",
         scanner:sub(1, 14), itemCount, workerCount, pending)
     textAt(mon, 1, 4, s, C.muted, colors.black)
 end
@@ -173,7 +169,7 @@ local function drawDash(mon, w, h)
 
     -- Workers panel
     box(mon, leftX, 5, leftW, h - 5, C.panel, C.border)
-    textAt(mon, leftX + 1, 6, "ВОРКЕРЫ (ЧЕРЕПАХИ)", C.title, C.panel)
+    textAt(mon, leftX + 1, 6, "WORKERS (TURTLES)", C.title, C.panel)
 
     local y = 8
     local anyWorker = false
@@ -181,11 +177,11 @@ local function drawDash(mon, w, h)
         anyWorker = true
         local statusText, color
         if info.status == "IDLE" then
-            statusText, color = "СВОБОДЕН", C.ok
+            statusText, color = "IDLE", C.ok
         elseif info.status == "CRAFTING" then
-            statusText, color = "КРАФТИТ", C.active
+            statusText, color = "CRAFTING", C.active
         elseif info.status == "TESTING" then
-            statusText, color = "ТЕСТ", C.warn
+            statusText, color = "TEST", C.warn
         else
             statusText, color = tostring(info.status), C.bad
         end
@@ -194,17 +190,17 @@ local function drawDash(mon, w, h)
         if y > h - 2 then break end
     end
     if not anyWorker then
-        textAt(mon, leftX + 1, 8, "Нет воркеров.", C.muted, C.panel)
-        textAt(mon, leftX + 1, 9, "Запустите worker.lua", C.muted, C.panel)
-        textAt(mon, leftX + 1, 10, "на черепахах.", C.muted, C.panel)
+        textAt(mon, leftX + 1, 8, "No workers.", C.muted, C.panel)
+        textAt(mon, leftX + 1, 9, "Run worker.lua", C.muted, C.panel)
+        textAt(mon, leftX + 1, 10, "on turtles.", C.muted, C.panel)
     end
 
     -- Queue panel
     if rightX < w then
         local rw = w - rightX
         box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
-        textAt(mon, rightX + 1, 6, "ОЧЕРЕДЬ ЗАДАЧ", C.title, C.panel)
-        btn(mon, w - 11, 6, 10, "СБРОС", "CLR_QUEUE", C.bad, colors.white)
+        textAt(mon, rightX + 1, 6, "TASK QUEUE", C.title, C.panel)
+        btn(mon, w - 11, 6, 10, "CLEAR", "CLR_QUEUE", C.bad, colors.white)
 
         y = 8
         for i = #dispatcher.queue, 1, -1 do
@@ -213,11 +209,11 @@ local function drawDash(mon, w, h)
             if t.status == "COMPLETED" then
                 mark, stext, color = "+", "OK", C.muted
             elseif t.status == "FAILED" then
-                mark, stext, color = "!", "ОШИБКА", C.bad
+                mark, stext, color = "!", "ERROR", C.bad
             elseif t.status == "ACTIVE" then
-                mark, stext, color = ">", "АКТИВЕН", C.active
+                mark, stext, color = ">", "ACTIVE", C.active
             else
-                mark, stext, color = "-", "ОЖИДАНИЕ", C.text
+                mark, stext, color = "-", "PENDING", C.text
             end
             textAt(mon, rightX + 1, y,
                 string.format("[%s] %-16s x%d %s", mark, shortName(t.name, 16), t.count, stext),
@@ -226,7 +222,7 @@ local function drawDash(mon, w, h)
             if y > h - 2 then break end
         end
         if #dispatcher.queue == 0 then
-            textAt(mon, rightX + 1, 8, "Очередь пуста.", C.muted, C.panel)
+            textAt(mon, rightX + 1, 8, "Queue empty.", C.muted, C.panel)
         end
     end
 end
@@ -236,7 +232,7 @@ end
 ----------------------------------------------------------------------
 local function drawStorage(mon, w, h)
     box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "СОДЕРЖИМОЕ СКЛАДА", C.title, C.panel)
+    textAt(mon, 3, 6, "STORAGE CONTENTS", C.title, C.panel)
 
     btn(mon, w - 7, 6, 6, "/\\ UP", "SUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "SDN", C.tab_off, colors.black)
@@ -252,7 +248,7 @@ local function drawStorage(mon, w, h)
     for i = ui.scroll + 1, math.min(#items, ui.scroll + maxRows) do
         local item = items[i]
         local hasRecipe = recipes.has(item.name)
-        btn(mon, 4, y, 8, "ЗАКАЗ", "CRAFT_INIT:" .. item.name,
+        btn(mon, 4, y, 8, "ORDER", "CRAFT_INIT:" .. item.name,
             hasRecipe and C.tab_on or C.tab_off, colors.white)
         textAt(mon, 14, y, string.format("%-26s x%d", shortName(item.name, 26), item.qty),
             hasRecipe and C.ok or C.text, C.panel)
@@ -260,11 +256,11 @@ local function drawStorage(mon, w, h)
     end
 
     if #items == 0 then
-        textAt(mon, 4, 9, "Склад пуст.", C.bad, C.panel)
-        textAt(mon, 4, 10, "Подключите сундуки к проводной сети.", C.muted, C.panel)
+        textAt(mon, 4, 9, "Storage empty.", C.bad, C.panel)
+        textAt(mon, 4, 10, "Connect chests to wired network.", C.muted, C.panel)
         if _G.GRID_NAME then
-            textAt(mon, 4, 12, "Сундук-сканер: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
-            textAt(mon, 4, 13, "(он исключён из склада - это нормально)", C.muted, C.panel)
+            textAt(mon, 4, 12, "Scanner chest: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
+            textAt(mon, 4, 13, "(excluded from storage - normal)", C.muted, C.panel)
         end
     end
 end
@@ -309,20 +305,20 @@ local function drawRecipe(mon, w, h)
 
     -- Left: live grid + test button
     box(mon, 2, 5, leftW, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "СЕТКА КРАФТА 3x3", C.title, C.panel)
+    textAt(mon, 3, 6, "CRAFT GRID 3x3", C.title, C.panel)
 
     if not _G.GRID_NAME then
-        textAt(mon, 3, 8, "Сундук-сканер не выбран.", C.bad, C.panel)
-        textAt(mon, 3, 9, "Откройте НАСТРОЙКИ.", C.muted, C.panel)
+        textAt(mon, 3, 8, "No scanner chest selected.", C.bad, C.panel)
+        textAt(mon, 3, 9, "Open SETTINGS tab.", C.muted, C.panel)
         return
     end
 
-    textAt(mon, 3, 8, "Сканер: " .. shortName(_G.GRID_NAME, 20), C.muted, C.panel)
+    textAt(mon, 3, 8, "Scanner: " .. shortName(_G.GRID_NAME, 20), C.muted, C.panel)
     drawGridPreview(mon, 4, 10)
-    textAt(mon, 4, 16, "Положите крафт в центр", C.muted, C.panel)
-    textAt(mon, 4, 17, "сундука (слоты 4-6/13-15/22-24)", C.muted, C.panel)
+    textAt(mon, 4, 16, "Place craft in center", C.muted, C.panel)
+    textAt(mon, 4, 17, "of chest (slots 4-6/13-15/22-24)", C.muted, C.panel)
 
-    local testLabel = _G.active_test and "ИДЁТ ТЕСТ..." or "ТЕСТ КРАФТА"
+    local testLabel = _G.active_test and "TESTING..." or "TEST CRAFT"
     btn(mon, 3, 19, leftW - 2, testLabel, "TEST_CRAFT",
         _G.active_test and C.muted or C.tab_on, colors.white)
 
@@ -330,7 +326,7 @@ local function drawRecipe(mon, w, h)
     if rightX < w then
         local rw = w - rightX - 1
         box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
-        textAt(mon, rightX + 1, 6, "ИЗВЕСТНЫЕ РЕЦЕПТЫ", C.title, C.panel)
+        textAt(mon, rightX + 1, 6, "KNOWN RECIPES", C.title, C.panel)
         btn(mon, w - 7, 6, 6, "/\\ UP", "RSUP", C.tab_off, colors.black)
         btn(mon, w - 7, h - 2, 6, "\\/ DN", "RSDN", C.tab_off, colors.black)
 
@@ -339,7 +335,7 @@ local function drawRecipe(mon, w, h)
         local y = 8
         for i = ui.recipe_scroll + 1, math.min(#recs, ui.recipe_scroll + maxRows) do
             local r = recs[i]
-            btn(mon, rightX + 1, y, 7, "КРАФТ", "REC_CRAFT:" .. r.name, C.tab_on, colors.white)
+            btn(mon, rightX + 1, y, 7, "CRAFT", "REC_CRAFT:" .. r.name, C.tab_on, colors.white)
             textAt(mon, rightX + 9, y, string.format("%-16s x%d", shortName(r.name, 16), r.output_count),
                 C.text, C.panel)
             btn(mon, w - 4, y, 3, " X", "REC_DEL:" .. r.name, C.bad, colors.white)
@@ -347,9 +343,9 @@ local function drawRecipe(mon, w, h)
         end
 
         if #recs == 0 then
-            textAt(mon, rightX + 1, 8, "Рецептов нет.", C.bad, C.panel)
-            textAt(mon, rightX + 1, 9, "Сделайте ТЕСТ КРАФТА", C.muted, C.panel)
-            textAt(mon, rightX + 1, 10, "и сохраните результат.", C.muted, C.panel)
+            textAt(mon, rightX + 1, 8, "No recipes.", C.bad, C.panel)
+            textAt(mon, rightX + 1, 9, "Run TEST CRAFT", C.muted, C.panel)
+            textAt(mon, rightX + 1, 10, "and save the result.", C.muted, C.panel)
         end
     end
 end
@@ -359,8 +355,8 @@ end
 ----------------------------------------------------------------------
 local function drawConf(mon, w, h)
     box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "ВЫБОР СУНДУКА-СКАНЕРА", C.title, C.panel)
-    textAt(mon, 3, 7, "(служит для записи рецептов; исключается из склада)", C.muted, C.panel)
+    textAt(mon, 3, 6, "SCANNER CHEST SELECT", C.title, C.panel)
+    textAt(mon, 3, 7, "(used to record recipes; excluded from storage)", C.muted, C.panel)
 
     btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
@@ -375,13 +371,13 @@ local function drawConf(mon, w, h)
         local role = roleOf(name)
         local isScanner = (name == _G.GRID_NAME)
 
-        local label = "ВЫБРАТЬ"
+        local label = "SELECT"
         local bg = isScanner and C.ok or C.tab_off
-        if role ~= "СКЛАД" and not isScanner then
+        if role ~= "STORAGE" and not isScanner then
             label = role
             bg = C.muted
         end
-        btn(mon, 4, y, 12, isScanner and "[ СКАНЕР ]" or label,
+        btn(mon, 4, y, 12, isScanner and "[ SCANNER ]" or label,
             "SET_GRID:" .. name, bg,
             isScanner and colors.black or colors.white)
 
@@ -392,8 +388,8 @@ local function drawConf(mon, w, h)
     end
 
     if #invs == 0 then
-        textAt(mon, 4, 10, "Инвентари не найдены!", C.bad, C.panel)
-        textAt(mon, 4, 11, "Подключите сундуки к проводной сети Core.", C.muted, C.panel)
+        textAt(mon, 4, 10, "No inventories found!", C.bad, C.panel)
+        textAt(mon, 4, 11, "Connect chests to Core's wired network.", C.muted, C.panel)
     end
 end
 
@@ -411,14 +407,14 @@ local function drawCraftModal(mon, w, h)
     local totalOutput = batches * outCount
 
     box(mon, mx, my, mw, mh, C.bg, C.tab_on)
-    textAt(mon, mx + 2, my + 1, "ЗАКАЗ АВТОКРАФТА", C.title, C.bg)
-    textAt(mon, mx + 2, my + 3, "Предмет: " .. shortName(ui.modal.name, mw - 12), C.text, C.bg)
+    textAt(mon, mx + 2, my + 1, "AUTOCRAFT ORDER", C.title, C.bg)
+    textAt(mon, mx + 2, my + 3, "Item: " .. shortName(ui.modal.name, mw - 7), C.text, C.bg)
     textAt(mon, mx + 2, my + 4,
-        string.format("Выход рецепта: x%d  ->  будет изготовлено: x%d", outCount, totalOutput),
+        string.format("Recipe out: x%d  ->  will craft: x%d", outCount, totalOutput),
         C.muted, C.bg)
 
-    textAt(mon, mx + 2, my + 6, "Количество: ", C.text, C.bg)
-    textAt(mon, mx + 14, my + 6, tostring(ui.modal.count), C.title, C.bg)
+    textAt(mon, mx + 2, my + 6, "Amount: ", C.text, C.bg)
+    textAt(mon, mx + 11, my + 6, tostring(ui.modal.count), C.title, C.bg)
 
     btn(mon, mx + 2,  my + 8, 5, "-1",  "DEC:1",  C.tab_off, colors.white)
     btn(mon, mx + 8,  my + 8, 5, "-10", "DEC:10", C.tab_off, colors.white)
@@ -427,11 +423,11 @@ local function drawCraftModal(mon, w, h)
     btn(mon, mx + mw - 13, my + 8, 5, "+10", "INC:10", C.tab_off, colors.white)
     btn(mon, mx + mw - 7,  my + 8, 5, "+64", "INC:64", C.tab_off, colors.white)
 
-    textAt(mon, mx + 2, my + 10, "Ингредиенты (есть / нужно):", C.muted, C.bg)
+    textAt(mon, mx + 2, my + 10, "Ingredients (have / need):", C.muted, C.bg)
 
     -- Feasibility summary line (can the whole craft, incl. sub-recipes, be done?)
     if ui.modal.feasible_ok ~= nil then
-        local fmsg = ui.modal.feasible_ok and "Можно изготовить: ДА" or ("Нельзя: " .. tostring(ui.modal.feasible_msg))
+        local fmsg = ui.modal.feasible_ok and "Craftable: YES" or ("Cannot: " .. tostring(ui.modal.feasible_msg))
         textAt(mon, mx + 2, my + mh - 5, fmsg:sub(1, mw - 4),
             ui.modal.feasible_ok and C.ok or C.warn, C.bg)
     end
@@ -450,15 +446,15 @@ local function drawCraftModal(mon, w, h)
             if iy > my + mh - 6 then break end
         end
     else
-        textAt(mon, mx + 2, my + 11, "Рецепт не найден! Сохраните его через ТЕСТ КРАФТА.", C.bad, C.bg)
+        textAt(mon, mx + 2, my + 11, "Recipe not found! Save it via TEST CRAFT.", C.bad, C.bg)
     end
 
     if ui.modal.error then
         textAt(mon, mx + 2, my + mh - 3, ui.modal.error:sub(1, mw - 4), C.bad, C.bg)
     end
 
-    btn(mon, mx + 2, my + mh - 2, 18, "ЗАПУСТИТЬ КРАФТ", "CRAFT_OK", C.ok, colors.white)
-    btn(mon, mx + mw - 14, my + mh - 2, 12, "ОТМЕНА", "CRAFT_CANCEL", C.tab_off, colors.white)
+    btn(mon, mx + 2, my + mh - 2, 18, "START CRAFT", "CRAFT_OK", C.ok, colors.white)
+    btn(mon, mx + mw - 14, my + mh - 2, 12, "CANCEL", "CRAFT_CANCEL", C.tab_off, colors.white)
 end
 
 local function drawRecipeSuccessModal(mon, w, h)
@@ -466,16 +462,16 @@ local function drawRecipeSuccessModal(mon, w, h)
     local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
     box(mon, mx, my, mw, mh, C.bg, C.ok)
 
-    textAt(mon, mx + 2, my + 2, "ТЕСТ КРАФТА УСПЕШЕН!", C.ok, C.bg)
+    textAt(mon, mx + 2, my + 2, "TEST CRAFT SUCCESS!", C.ok, C.bg)
     textAt(mon, mx + 2, my + 4,
-        "Получено: " .. shortName(ui.modal.data.output.name, 24) .. " x" .. ui.modal.data.output.count,
+        "Got: " .. shortName(ui.modal.data.output.name, 24) .. " x" .. ui.modal.data.output.count,
         C.text, C.bg)
-    textAt(mon, mx + 2, my + 6, "Ингредиенты распознаны.", C.muted, C.bg)
-    textAt(mon, mx + 2, my + 7, "Результат в слоте 16 сканера.", C.muted, C.bg)
-    textAt(mon, mx + 2, my + 9, "Сохранить рецепт в базу?", C.text, C.bg)
+    textAt(mon, mx + 2, my + 6, "Ingredients recognized.", C.muted, C.bg)
+    textAt(mon, mx + 2, my + 7, "Result in scanner slot 16.", C.muted, C.bg)
+    textAt(mon, mx + 2, my + 9, "Save recipe to database?", C.text, C.bg)
 
-    btn(mon, mx + 2, my + mh - 2, 18, "СОХРАНИТЬ", "SAVE_OK", C.ok, colors.white)
-    btn(mon, mx + mw - 14, my + mh - 2, 12, "ОТМЕНА", "SAVE_CANCEL", C.tab_off, colors.white)
+    btn(mon, mx + 2, my + mh - 2, 18, "SAVE", "SAVE_OK", C.ok, colors.white)
+    btn(mon, mx + mw - 14, my + mh - 2, 12, "CANCEL", "SAVE_CANCEL", C.tab_off, colors.white)
 end
 
 local function drawRecipeFailModal(mon, w, h)
@@ -483,9 +479,9 @@ local function drawRecipeFailModal(mon, w, h)
     local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
     box(mon, mx, my, mw, mh, C.bg, C.bad)
 
-    textAt(mon, mx + 2, my + 2, "ОШИБКА ТЕСТА КРАФТА", C.bad, C.bg)
-    textAt(mon, mx + 2, my + 5, "Причина: " .. tostring(ui.modal.error):sub(1, mw - 12), C.text, C.bg)
-    btn(mon, mx + math.floor((mw - 12) / 2), my + mh - 2, 12, "ЗАКРЫТЬ", "ERR_CLOSE", C.bad, colors.white)
+    textAt(mon, mx + 2, my + 2, "TEST CRAFT ERROR", C.bad, C.bg)
+    textAt(mon, mx + 2, my + 5, "Reason: " .. tostring(ui.modal.error):sub(1, mw - 9), C.text, C.bg)
+    btn(mon, mx + math.floor((mw - 12) / 2), my + mh - 2, 12, "CLOSE", "ERR_CLOSE", C.bad, colors.white)
 end
 
 local function drawModal(mon, w, h)

@@ -288,7 +288,7 @@ test("planner fails when raw material has no recipe and no stock", function()
     local tasks, err = planner.plan("minecraft:oak_stairs", 4)
     assertEq(tasks, nil, "should fail")
     assertEq(err ~= nil, true, "error message present")
-    assertEq(string.find(err, "Нет рецепта") ~= nil, true, "error mentions no recipe")
+    assertEq(string.find(err, "No recipe") ~= nil, true, "error mentions no recipe")
 end)
 
 -- 7. recipes.get_from_grid reads center 3x3 + output slot.

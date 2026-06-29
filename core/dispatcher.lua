@@ -75,7 +75,7 @@ function dispatcher.autoAssignBuffers(workerId)
         dispatcher.save()
         return true
     end
-    return false, "Недостаточно свободных сундуков для буферов (нужно 2)"
+    return false, "Not enough free chests for buffers (need 2)"
 end
 
 function dispatcher.addTask(task)

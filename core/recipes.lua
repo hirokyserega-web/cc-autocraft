@@ -35,11 +35,11 @@ end
 -- The output slot (16) is read if present (used when saving a known result).
 function recipes.get_from_grid(pName)
     local p = peripheral.wrap(pName)
-    if not p then return nil, "Периферия " .. tostring(pName) .. " не найдена" end
+    if not p then return nil, "Peripheral " .. tostring(pName) .. " not found" end
 
     local size = p.size() or 27
     if size < 27 then
-        return nil, "Сундук-сканер должен быть стандартным (27 слотов). Текущий: " .. size
+        return nil, "Scanner chest must be standard (27 slots). Current: " .. size
     end
 
     local items = p.list()
@@ -57,7 +57,7 @@ function recipes.get_from_grid(pName)
     end
 
     if #ingredients == 0 then
-        return nil, "Сетка пуста! Положите крафт в центральные слоты 4,5,6 / 13,14,15 / 22,23,24"
+        return nil, "Grid is empty! Place craft in center slots 4,5,6 / 13,14,15 / 22,23,24"
     end
 
     local outDetail = p.getItemDetail(recipes.OUTPUT_SLOT)

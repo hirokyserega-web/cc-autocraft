@@ -33,7 +33,7 @@ function planner.plan(itemName, count)
         -- The rest must be crafted.
         local options = recipes.get(name)
         if not options or #options == 0 then
-            return false, "Нет рецепта для: " .. name
+            return false, "No recipe for: " .. name
         end
 
         local recipe = options[1]
@@ -75,7 +75,7 @@ function planner.plan(itemName, count)
         if not storage.reserve(name, qty) then
             -- Rollback everything we reserved for this plan.
             for rname, rqty in pairs(committed) do storage.release(rname, rqty) end
-            return nil, "Не удалось зарезервировать ресурс: " .. name
+            return nil, "Failed to reserve resource: " .. name
         end
         committed[name] = qty
     end
@@ -119,7 +119,7 @@ function planner.check(itemName, count)
             table.insert(list, short .. " x" .. q)
         end
         table.sort(list)
-        return false, "Не хватает: " .. table.concat(list, ", ")
+        return false, "Missing: " .. table.concat(list, ", ")
     end
     return true
 end

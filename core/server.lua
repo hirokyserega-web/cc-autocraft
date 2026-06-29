@@ -34,7 +34,7 @@ local function handle_test_result(workerId, success, err)
     local test = _G.active_test
     local worker = dispatcher.workers[workerId]
     if not worker or not worker.buffers then
-        ui.modal = { type = "RECIPE_FAILED", error = "Нет буферов у воркера." }
+        ui.modal = { type = "RECIPE_FAILED", error = "Worker has no buffers." }
         _G.active_test = nil
         return
     end
@@ -43,7 +43,7 @@ local function handle_test_result(workerId, success, err)
     local out_p = peripheral.wrap(worker.buffers.output)
     local scanner = _G.GRID_NAME and peripheral.wrap(_G.GRID_NAME)
     if not out_p or not scanner then
-        ui.modal = { type = "RECIPE_FAILED", error = "Нет выходного сундука или сканера." }
+        ui.modal = { type = "RECIPE_FAILED", error = "Missing output chest or scanner." }
         worker.status = "IDLE"
         _G.active_test = nil
         return
@@ -82,7 +82,7 @@ local function handle_test_result(workerId, success, err)
                 }
             }
         else
-            ui.modal = { type = "RECIPE_FAILED", error = "Выходной сундук пуст — крафт не получился." }
+            ui.modal = { type = "RECIPE_FAILED", error = "Output chest empty - craft failed." }
         end
     else
         -- Craft failed: return everything to its original grid slot.
@@ -94,7 +94,7 @@ local function handle_test_result(workerId, success, err)
                 end
             end
         end
-        ui.modal = { type = "RECIPE_FAILED", error = err or "Неизвестная ошибка" }
+        ui.modal = { type = "RECIPE_FAILED", error = err or "Unknown error" }
     end
 
     -- Refill any consumed grid cells from general storage so the layout stays
@@ -114,21 +114,21 @@ end
 
 local function trigger_test_craft()
     if not _G.GRID_NAME then
-        ui.modal = { type = "RECIPE_FAILED", error = "Сначала выберите сундук-сканер в НАСТРОЙКАХ." }
+        ui.modal = { type = "RECIPE_FAILED", error = "Select a scanner chest in SETTINGS first." }
         return
     end
     if _G.active_test then
-        ui.modal = { type = "RECIPE_FAILED", error = "Тест уже выполняется, подождите." }
+        ui.modal = { type = "RECIPE_FAILED", error = "A test is already running, please wait." }
         return
     end
 
     local res, err = recipes.get_from_grid(_G.GRID_NAME)
     if not res then
-        ui.modal = { type = "RECIPE_FAILED", error = err or "Сетка пуста." }
+        ui.modal = { type = "RECIPE_FAILED", error = err or "Grid is empty." }
         return
     end
     if #res.ingredients == 0 then
-        ui.modal = { type = "RECIPE_FAILED", error = "Положите ингредиенты в центральную сетку 3x3." }
+        ui.modal = { type = "RECIPE_FAILED", error = "Place ingredients in the central 3x3 grid." }
         return
     end
 
@@ -138,7 +138,7 @@ local function trigger_test_craft()
         if w.status == "IDLE" and w.buffers then worker_id = wid break end
     end
     if not worker_id then
-        ui.modal = { type = "RECIPE_FAILED", error = "Нет свободной черепахи с буферами." }
+        ui.modal = { type = "RECIPE_FAILED", error = "No free turtle with buffers." }
         return
     end
 
@@ -211,7 +211,7 @@ local function handleButton(btn_id)
     if btn_id:sub(1, 11) == "CRAFT_INIT:" then
         local name = btn_id:sub(12)
         if not recipes.get(name) then
-            ui.modal = { type = "RECIPE_FAILED", error = "Нет рецепта для " .. name .. ". Запишите его через ТЕСТ КРАФТА." }
+            ui.modal = { type = "RECIPE_FAILED", error = "No recipe for " .. name .. ". Record it via TEST CRAFT." }
             return
         end
         storage.refresh()
