@@ -5,15 +5,12 @@ local files = {
     "core/server.lua", "worker/worker.lua", "ui/monitor.lua", "config.lua", "main.lua"
 }
 
-print("--- CC-AUTOCRAFT ROBUST INSTALLER ---")
+print("CC-AUTOCRAFT 2.0 - CLEAN INSTALL")
 
 local function download(path)
     local url = GITHUB_BASE .. path .. "?t=" .. os.epoch("utc")
     local res = http.get(url)
-    if not res then 
-        print("Error downloading: " .. path)
-        return false 
-    end
+    if not res then return false end
     local content = res.readAll()
     res.close()
     
@@ -29,21 +26,19 @@ local function download(path)
     return true
 end
 
--- Full cleanup of existing system
-local dirs = {"lib", "core", "worker", "ui", "lang", "scripts"}
-for _, d in ipairs(dirs) do
-    if fs.exists(d) then fs.delete(d) end
-end
+-- CLEANING EVERYTHING
+print("Cleaning old files...")
+local old = {"lib", "core", "worker", "ui", "data", "main.lua", "startup.lua"}
+for _, d in ipairs(old) do if fs.exists(d) then fs.delete(d) end end
 
 for _, file in ipairs(files) do
-    print("Installing: " .. file)
-    download(file)
+    print("Downloading: " .. file)
+    if not download(file) then print("FAILED: " .. file) end
 end
 
-if fs.exists("startup.lua") then fs.delete("startup.lua") end
 local f = fs.open("startup.lua", "w")
 f.writeLine("shell.run('main.lua run')")
 f.close()
 
-print("\n[SUCCESS] Installed! Starting now...")
-shell.run("main.lua run")
+print("\nDONE! REBOOTING SYSTEM...")
+os.reboot()
