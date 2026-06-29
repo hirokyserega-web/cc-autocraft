@@ -81,18 +81,18 @@ function worker.loop()
             })
         end
 
-        local id, type, data = net.receive(3)
-        if id and type == "DISCOVER_ACK" then
+        local id, msg_type, data = net.receive(3)
+        if id and msg_type == "DISCOVER_ACK" then
             worker.core_id = id
             print("Connected to Core: " .. id)
 
-        elseif type == "CRAFT_REQUEST" or type == "TEST_CRAFT" then
-            worker.status = (type == "TEST_CRAFT") and "TESTING" or "CRAFTING"
+        elseif msg_type == "CRAFT_REQUEST" or msg_type == "TEST_CRAFT" then
+            worker.status = (msg_type == "TEST_CRAFT") and "TESTING" or "CRAFTING"
             if worker.core_id then
                 net.send(worker.core_id, "HEARTBEAT", { status = worker.status })
             end
 
-            local action = (type == "TEST_CRAFT") and "testing craft" or ("crafting " .. tostring(data.name))
+            local action = (msg_type == "TEST_CRAFT") and "testing craft" or ("crafting " .. tostring(data.name))
             print("Worker: " .. action)
 
             local input, input_side, output, output_side = get_adjacent_chests()
