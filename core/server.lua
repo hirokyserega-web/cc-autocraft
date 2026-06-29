@@ -108,6 +108,18 @@ local function handle_test_result(workerId, success, err)
         }
     end
     
+    -- Now, restore ALL ingredients to their original slots from storage!
+    -- This ensures that whether success or failure, the chest's crafting grid remains 100% intact!
+    local current_list = scanner.list() or {}
+    for _, ing in ipairs(_G.active_test.ingredients) do
+        local cur = current_list[ing.slot]
+        local cur_count = cur and cur.count or 0
+        local needed = (ing.count or 1) - cur_count
+        if needed > 0 then
+            storage.extract(ing.name, needed, _G.GRID_NAME, ing.slot)
+        end
+    end
+    
     worker.status = "IDLE"
     _G.active_test = nil
 end
@@ -206,15 +218,22 @@ function main()
         print("Warning: Monitor not found!")
     end
 
-    local tick_timer = os.startTimer(1)
+    -- Fast 0.5s timer for smooth grid alignment and queue processing
+    local tick_timer = os.startTimer(0.5)
 
     while true do
         storage.refresh()
+        
+        -- Auto-arrange chest grid if configured
+        if _G.GRID_NAME then
+            recipes.arrange_grid(_G.GRID_NAME)
+        end
+        
         local event, p1, p2, p3, p4 = os.pullEvent()
         
         if event == "timer" and p1 == tick_timer then
             dispatcher.processQueue()
-            tick_timer = os.startTimer(1)
+            tick_timer = os.startTimer(0.5)
             
         elseif event == "rednet_message" then
             local id, msg = p1, p2
@@ -249,15 +268,54 @@ function main()
                 if btn_id == "DASH" or btn_id == "STORAGE" or btn_id == "RECIPE" or btn_id == "CONF" then
                     ui.tab = btn_id
                     ui.scroll = 0
+                    ui.recipe_scroll = 0
                     
-                -- Scrolling Storage List
+                -- Scrolling lists (both Storage and Scanner selection)
                 elseif btn_id == "SCROLL_UP" then
-                    ui.scroll = math.max(0, ui.scroll - 5)
+                    ui.scroll = math.max(0, ui.scroll - 3)
                 elseif btn_id == "SCROLL_DOWN" then
-                    local total_items = 0
-                    for _ in pairs(storage.cache) do total_items = total_items + 1 end
-                    ui.scroll = math.min(total_items - 1, ui.scroll + 5)
+                    if ui.tab == "STORAGE" then
+                        local total_items = 0
+                        for _ in pairs(storage.cache) do total_items = total_items + 1 end
+                        ui.scroll = math.min(total_items - 1, ui.scroll + 3)
+                    elseif ui.tab == "CONF" then
+                        local inventories = {}
+                        local names = peripheral.getNames()
+                        for _, n in ipairs(names) do
+                            if peripheral.getType(n) == "inventory" or peripheral.hasType(n, "inventory") then
+                                if not storage.buffers[n] then
+                                    table.insert(inventories, n)
+                                end
+                            end
+                        end
+                        ui.scroll = math.min(#inventories - 1, ui.scroll + 2)
+                    end
                     if ui.scroll < 0 then ui.scroll = 0 end
+                    
+                -- Recipes list scrolling
+                elseif btn_id == "RECIPE_SCROLL_UP" then
+                    ui.recipe_scroll = math.max(0, ui.recipe_scroll - 3)
+                elseif btn_id == "RECIPE_SCROLL_DOWN" then
+                    local total_recipes = 0
+                    for _ in pairs(recipes.data) do total_recipes = total_recipes + 1 end
+                    ui.recipe_scroll = math.min(total_recipes - 1, ui.recipe_scroll + 3)
+                    if ui.recipe_scroll < 0 then ui.recipe_scroll = 0 end
+                    
+                -- Delete Recipe
+                elseif btn_id:sub(1, 14) == "DELETE_RECIPE:" then
+                    local recName = btn_id:sub(15)
+                    recipes.data[recName] = nil
+                    recipes.save()
+                    print("Deleted recipe for: " .. recName)
+                    
+                -- Clear Queue
+                elseif btn_id == "CLEAR_QUEUE" then
+                    dispatcher.queue = {}
+                    for name, qty in pairs(storage.reserved) do
+                        storage.reserved[name] = 0
+                    end
+                    dispatcher.save()
+                    print("Crafting queue cleared!")
                     
                 -- Conf: set active scanner
                 elseif btn_id:sub(1, 9) == "SET_GRID:" then

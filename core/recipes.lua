@@ -68,4 +68,27 @@ function recipes.add(output_name, ingredients, count)
     recipes.save()
 end
 
+function recipes.arrange_grid(grid_name)
+    if not grid_name then return end
+    if _G.active_test then return end -- Don't move items while active test is running!
+    
+    local p = peripheral.wrap(grid_name)
+    if not p then return end
+    
+    local list = p.list() or {}
+    local workbench_to_grid = {
+        [1] = 4,   [2] = 5,   [3] = 6,
+        [10] = 13, [11] = 14, [12] = 15,
+        [19] = 22, [20] = 23, [21] = 24
+    }
+    
+    for from_slot, to_slot in pairs(workbench_to_grid) do
+        local item = list[from_slot]
+        if item then
+            -- Try to push item to the corresponding central grid slot
+            p.pushItems(grid_name, from_slot, item.count, to_slot)
+        end
+    end
+end
+
 return recipes
