@@ -115,6 +115,7 @@ function dispatcher.autoAssignBuffers(workerId)
             end
             if not isAssigned then table.insert(available, name) end
         end
+        os.sleep(0) -- Yield to prevent watchdog crash when scanning many peripherals
     end
 
     if #available >= 2 then

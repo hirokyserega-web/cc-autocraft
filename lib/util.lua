@@ -78,6 +78,7 @@ function util.getInventories()
         if util.isInventory(name) then
             table.insert(list, name)
         end
+        os.sleep(0) -- Yield to avoid yielding errors on large networks
     end
     table.sort(list)
     return list

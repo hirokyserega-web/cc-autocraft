@@ -15,7 +15,6 @@ function storage.refresh()
     storage.peripherals = {}
     local names = peripheral.getNames()
     for _, name in ipairs(names) do
-        _op = _op + 1; util.maybeYield(_op, 4)
         if util.isInventory(name) then
             -- Skip the active recipe grid and worker buffer chests
             if name ~= _G.GRID_NAME and not storage.buffers[name] then
@@ -32,8 +31,8 @@ function storage.refresh()
                     end
                 end
             end
-            os.sleep(0) -- Yield after listing each inventory to avoid yielding errors
         end
+        os.sleep(0) -- Yield on every peripheral checked to avoid yielding errors
     end
 end
 
