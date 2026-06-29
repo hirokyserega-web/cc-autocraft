@@ -48,8 +48,8 @@ function dispatcher.updateStorageBuffers()
     storage.buffers = {}
     for _, w in pairs(dispatcher.workers) do
         if w.buffers then
-            storage.buffers[w.buffers.input] = true
-            storage.buffers[w.buffers.output] = true
+            if w.buffers.input then storage.buffers[w.buffers.input] = true end
+            if w.buffers.output then storage.buffers[w.buffers.output] = true end
         end
     end
 end
