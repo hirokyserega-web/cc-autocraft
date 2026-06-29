@@ -327,7 +327,7 @@ local function handleButton(btn_id)
         end
         return
     end
-    if btn_id == "SAVE_CANCEL" then ui.modal = nil return end
+    if btn_id == "SAVE_CANCEL" or btn_id == "MODAL_CANCEL" then ui.modal = nil return end
 
     -- Clear queue
     if btn_id == "CLR_QUEUE" then
@@ -335,6 +335,62 @@ local function handleButton(btn_id)
         for n in pairs(storage.reserved) do storage.reserved[n] = 0 end
         dispatcher.save()
         util.log("Queue cleared.")
+        return
+    end
+
+    -- Manual worker buffer setting modal triggers
+    if btn_id:sub(1, 18) == "SET_BUFIN_SELECT:" then
+        local chest = btn_id:sub(19)
+        ui.modal = { type = "SELECT_WORKER", mode = "IN", chest = chest }
+        return
+    end
+    if btn_id:sub(1, 19) == "SET_BUFOUT_SELECT:" then
+        local chest = btn_id:sub(20)
+        ui.modal = { type = "SELECT_WORKER", mode = "OUT", chest = chest }
+        return
+    end
+
+    -- Process manual worker buffer mapping
+    if btn_id:sub(1, 15) == "SET_WORKER_BUF:" then
+        local parts = {}
+        for s in string.gmatch(btn_id:sub(16), "([^:]+)") do
+            table.insert(parts, s)
+        end
+        local mode, chest, workerId = parts[1], parts[2], tonumber(parts[3])
+        if mode and chest and workerId then
+            local w = dispatcher.workers[workerId]
+            if w then
+                if not w.buffers then w.buffers = {} end
+                if mode == "IN" then
+                    w.buffers.input = chest
+                else
+                    w.buffers.output = chest
+                end
+                dispatcher.updateStorageBuffers()
+                dispatcher.save()
+                util.log("Assigned worker #" .. workerId .. " " .. mode .. " buffer to " .. chest)
+            end
+        end
+        ui.modal = nil
+        return
+    end
+
+    -- Clear chest role to Storage
+    if btn_id:sub(1, 12) == "SET_STORAGE:" then
+        local name = btn_id:sub(13)
+        if _G.GRID_NAME == name then
+            _G.GRID_NAME = nil
+            saveScanner()
+        end
+        for wid, w in pairs(dispatcher.workers) do
+            if w.buffers then
+                if w.buffers.input == name then w.buffers.input = nil end
+                if w.buffers.output == name then w.buffers.output = nil end
+            end
+        end
+        dispatcher.updateStorageBuffers()
+        dispatcher.save()
+        util.log("Reset role of " .. name .. " to storage.")
         return
     end
 

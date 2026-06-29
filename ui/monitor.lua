@@ -66,12 +66,24 @@ local function textAt(mon, x, y, s, fg, bg)
 end
 
 -- Draw a clickable button and register its hit rect.
-local function btn(mon, x, y, w, label, id, bg, fg)
+local function btn(mon, x, y, w, label, id, bg, fg, h)
+    h = h or 1
     bg = bg or C.tab_on
     fg = fg or colors.white
-    mon.setBackgroundColor(bg)
+
+    if h > 1 then
+        fill(mon, x, y, w, h, bg)
+    else
+        mon.setBackgroundColor(bg)
+        mon.setCursorPos(x, y)
+        mon.write(string.rep(" ", w))
+    end
+
     mon.setTextColor(fg)
-    mon.setCursorPos(x, y)
+    mon.setBackgroundColor(bg)
+    local textY = y + math.floor((h - 1) / 2)
+    mon.setCursorPos(x, textY)
+
     local s = label
     if #s < w then
         local pad = math.floor((w - #s) / 2)
@@ -80,7 +92,7 @@ local function btn(mon, x, y, w, label, id, bg, fg)
         s = s:sub(1, w)
     end
     mon.write(s)
-    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y, id = id })
+    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y + h - 1, id = id })
 end
 
 local function cleanName(name)
@@ -138,9 +150,10 @@ local function drawHeader(mon, w)
     for i, t in ipairs(tabs) do
         local x = startX + (i - 1) * (tw + gap)
         local isActive = (ui.tab == t.id)
-        btn(mon, x, 2, tw, t.text, "TAB:" .. t.id,
+        btn(mon, x, 1, tw, t.text, "TAB:" .. t.id,
             isActive and C.tab_on or C.tab_off,
-            isActive and colors.white or colors.lightGray)
+            isActive and colors.white or colors.lightGray,
+            3)
     end
 end
 
@@ -384,7 +397,7 @@ local function drawConf(mon, w, h)
     btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
     btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
 
-    textAt(mon, 4, 9, "Status       Inventory Name             Assigned Role", C.title, C.panel)
+    textAt(mon, 4, 9, "Action Buttons            Inventory Name   Assigned Role", C.title, C.panel)
     textAt(mon, 3, 10, string.rep("-", w - 14), C.border, C.panel)
 
     local invs = _G.NETWORK_INVENTORIES or {}
@@ -396,19 +409,46 @@ local function drawConf(mon, w, h)
         local name = invs[i]
         local role = roleOf(name)
         local isScanner = (name == _G.GRID_NAME)
-
-        local label = "SELECT"
-        local bg = isScanner and C.ok or C.tab_off
-        if role ~= "STORAGE" and not isScanner then
-            label = role
-            bg = C.muted
+        local isBufIn, isBufOut = false, false
+        local assignedWorkerId = nil
+        for wid, w in pairs(dispatcher.workers) do
+            if w.buffers then
+                if w.buffers.input == name then
+                    isBufIn = true
+                    assignedWorkerId = wid
+                elseif w.buffers.output == name then
+                    isBufOut = true
+                    assignedWorkerId = wid
+                end
+            end
         end
-        btn(mon, 4, y, 11, isScanner and "SCANNER" or label,
-            "SET_GRID:" .. name, bg,
-            isScanner and colors.black or colors.white)
 
-        textAt(mon, 17, y, shortName(name, 26), C.text, C.panel)
-        textAt(mon, 45, y, string.format("[%s]", role), isScanner and C.ok or C.muted, C.panel)
+        btn(mon, 4, y, 6, "SCAN", "SET_GRID:" .. name, isScanner and C.ok or C.tab_off, isScanner and colors.black or colors.white)
+        btn(mon, 11, y, 4, "IN", "SET_BUFIN_SELECT:" .. name, isBufIn and C.active or C.tab_off, isBufIn and colors.black or colors.white)
+        btn(mon, 16, y, 5, "OUT", "SET_BUFOUT_SELECT:" .. name, isBufOut and C.active or C.tab_off, isBufOut and colors.black or colors.white)
+        
+        local isStorage = (role == "STORAGE")
+        btn(mon, 22, y, 5, "STOR", "SET_STORAGE:" .. name, isStorage and C.tab_on or C.tab_off, isStorage and colors.white or colors.lightGray)
+
+        local statusLabel = ""
+        local statusColor = C.muted
+        if isScanner then
+            statusLabel = "[SCANNER]"
+            statusColor = C.ok
+        elseif isBufIn then
+            statusLabel = string.format("[IN #%d]", assignedWorkerId)
+            statusColor = C.active
+        elseif isBufOut then
+            statusLabel = string.format("[OUT #%d]", assignedWorkerId)
+            statusColor = C.active
+        else
+            statusLabel = "[STORAGE]"
+            statusColor = C.muted
+        end
+
+        textAt(mon, 28, y, shortName(name, 12), C.text, C.panel)
+        textAt(mon, 41, y, statusLabel, statusColor, C.panel)
+
         y = y + 1
         if y > h - 3 then break end
     end
@@ -510,6 +550,37 @@ local function drawRecipeFailModal(mon, w, h)
     btn(mon, mx + math.floor((mw - 12) / 2), my + mh - 2, 12, "CLOSE", "ERR_CLOSE", C.bad, colors.white)
 end
 
+local function drawSelectWorkerModal(mon, w, h)
+    local mw, mh = 40, 12
+    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
+    box(mon, mx, my, mw, mh, C.bg, C.tab_on)
+
+    local modeText = (ui.modal.mode == "IN") and "INPUT" or "OUTPUT"
+    textAt(mon, mx + 2, my + 2, "SELECT WORKER FOR " .. modeText, C.title, C.bg)
+    textAt(mon, mx + 2, my + 4, "Chest: " .. shortName(ui.modal.chest, 24), C.text, C.bg)
+
+    local ids = {}
+    for id in pairs(dispatcher.workers) do
+        table.insert(ids, id)
+    end
+    table.sort(ids)
+
+    local y = my + 6
+    for _, id in ipairs(ids) do
+        btn(mon, mx + 4, y, 14, "Worker #" .. id,
+            string.format("SET_WORKER_BUF:%s:%s:%s", ui.modal.mode, ui.modal.chest, id),
+            C.tab_on, colors.white)
+        y = y + 2
+        if y > my + mh - 3 then break end
+    end
+
+    if #ids == 0 then
+        textAt(mon, mx + 4, my + 6, "No workers online.", C.bad, C.bg)
+    end
+
+    btn(mon, mx + mw - 12, my + mh - 2, 10, "CANCEL", "MODAL_CANCEL", C.tab_off, colors.white)
+end
+
 local function drawModal(mon, w, h)
     if not ui.modal then return end
     if ui.modal.type == "CRAFT" then
@@ -518,6 +589,8 @@ local function drawModal(mon, w, h)
         drawRecipeSuccessModal(mon, w, h)
     elseif ui.modal.type == "RECIPE_FAILED" then
         drawRecipeFailModal(mon, w, h)
+    elseif ui.modal.type == "SELECT_WORKER" then
+        drawSelectWorkerModal(mon, w, h)
     end
 end
 
