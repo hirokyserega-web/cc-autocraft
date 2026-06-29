@@ -117,8 +117,8 @@ function worker.loop()
                     })
                 end
             else
-                local turtle_name = peripheral.getNameLocal() or opposite_side(input_side)
-                local target_output_name = peripheral.getNameLocal() or opposite_side(output_side)
+                local turtle_name = (type(peripheral.getNameLocal) == "function" and peripheral.getNameLocal()) or opposite_side(input_side)
+                local target_output_name = (type(peripheral.getNameLocal) == "function" and peripheral.getNameLocal()) or opposite_side(output_side)
 
                 -- 1. Clear turtle inventory into the output chest.
                 push_all_to_output(output, target_output_name)
