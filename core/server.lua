@@ -11,6 +11,12 @@ _G.GRID_NAME = nil       -- name of the scanner chest
 _G.active_test = nil     -- current test craft state
 local SCANNER_PATH = "data/scanner.dat"
 
+local function isLocalSide(name)
+    if not name then return false end
+    local sides = { down = true, up = true, front = true, back = true, left = true, right = true }
+    return sides[name] == true
+end
+
 local function scannerSignature(name)
     if not name then return nil end
     local p = peripheral.wrap(name)
@@ -490,8 +496,13 @@ function main()
                     local state_changed = false
                     if msg.type == "DISCOVER" then
                         net.send(id, "DISCOVER_ACK", { id = os.getComputerID() })
-                        if msg.data.input_chest and msg.data.output_chest then
-                            dispatcher.assignWorkerBuffers(id, msg.data.input_chest, msg.data.output_chest)
+                        local in_chest = msg.data.input_chest
+                        local out_chest = msg.data.output_chest
+                        if isLocalSide(in_chest) then in_chest = nil end
+                        if isLocalSide(out_chest) then out_chest = nil end
+                        
+                        if in_chest and out_chest then
+                            dispatcher.assignWorkerBuffers(id, in_chest, out_chest)
                         else
                             dispatcher.autoAssignBuffers(id)
                         end
@@ -513,10 +524,15 @@ function main()
                             dispatcher.workers[id].status = msg.data.status
                             state_changed = true
                         end
-                        if msg.data.input_chest and msg.data.output_chest then
+                        local in_chest = msg.data.input_chest
+                        local out_chest = msg.data.output_chest
+                        if isLocalSide(in_chest) then in_chest = nil end
+                        if isLocalSide(out_chest) then out_chest = nil end
+                        
+                        if in_chest and out_chest then
                             local w = dispatcher.workers[id]
-                            if not w.buffers or w.buffers.input ~= msg.data.input_chest or w.buffers.output ~= msg.data.output_chest then
-                                dispatcher.assignWorkerBuffers(id, msg.data.input_chest, msg.data.output_chest)
+                            if not w.buffers or w.buffers.input ~= in_chest or w.buffers.output ~= out_chest then
+                                dispatcher.assignWorkerBuffers(id, in_chest, out_chest)
                                 state_changed = true
                             end
                         end

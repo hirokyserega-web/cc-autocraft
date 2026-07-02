@@ -46,10 +46,18 @@ local function get_adjacent_chests()
     return input_chest, input_side, output_chest, output_side
 end
 
+local function isLocalSide(name)
+    if not name then return false end
+    local sides = { down = true, up = true, front = true, back = true, left = true, right = true }
+    return sides[name] == true
+end
+
 local function get_adjacent_chest_names()
     local input, _, output, _ = get_adjacent_chests()
     local in_name = input and peripheral.getName(input) or nil
     local out_name = output and peripheral.getName(output) or nil
+    if isLocalSide(in_name) then in_name = nil end
+    if isLocalSide(out_name) then out_name = nil end
     return in_name, out_name
 end
 
