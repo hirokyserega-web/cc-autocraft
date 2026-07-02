@@ -200,16 +200,54 @@ local function drawSettings(mon, w, h)
 
     local invs = _G.NETWORK_INVENTORIES or {}
     local y = 7
-    for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + (h - 9)) do
+    local max_fit = math.max(1, math.floor((h - 7) / 3))
+    
+    for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + max_fit) do
         local name = invs[i]
-        local isScanner = (_G.GRID_NAME == name)
-        local gid = "SET_GRID:" .. name
-        local sid = "SET_STORAGE:" .. name
+        local isScanner = (name == _G.GRID_NAME)
         
-        widgets.drawText(mon, mainX + 2, y, shortName(name, 16), theme.textBase, theme.surface)
-        widgets.drawButton(mon, w - 15, y, 6, 1, "SCAN", gid, isScanner or ui.pressed == gid, theme, ui.btns)
-        widgets.drawButton(mon, w - 7, y, 5, 1, "STOR", sid, (not isScanner) or ui.pressed == sid, theme, ui.btns)
-        y = y + 1
+        -- Determine buffer state
+        local isBufIn, isBufOut = false, false
+        for wid, w_data in pairs(dispatcher.workers) do
+            if w_data.buffers then
+                if w_data.buffers.input == name then isBufIn = true end
+                if w_data.buffers.output == name then isBufOut = true end
+            end
+        end
+        local isStorage = (not isScanner) and (not isBufIn) and (not isBufOut)
+        
+        -- Role label and color
+        local rLabel, rColor = "STORAGE", colors.lightGray
+        if isScanner then rLabel, rColor = "SCANNER", colors.orange
+        elseif isBufIn then
+            for wid, w_data in pairs(dispatcher.workers) do
+                if w_data.buffers and w_data.buffers.input == name then
+                    rLabel = "IN #" .. wid
+                    rColor = colors.lime
+                    break
+                end
+            end
+        elseif isBufOut then
+            for wid, w_data in pairs(dispatcher.workers) do
+                if w_data.buffers and w_data.buffers.output == name then
+                    rLabel = "OUT #" .. wid
+                    rColor = colors.red
+                    break
+                end
+            end
+        end
+
+        -- Draw Chest Name and its Role Label
+        widgets.drawText(mon, mainX + 1, y, shortName(name, 10), theme.textBase, theme.surface)
+        widgets.drawText(mon, w - 10, y, "[" .. rLabel .. "]", rColor, theme.surface)
+        
+        -- Draw the 4 Action Buttons
+        widgets.drawButton(mon, mainX + 1, y + 1, 4, 1, "SCAN", "SET_GRID:" .. name, isScanner or ui.pressed == ("SET_GRID:" .. name), theme, ui.btns)
+        widgets.drawButton(mon, mainX + 6, y + 1, 2, 1, "IN", "SET_BUFIN_SELECT:" .. name, isBufIn or ui.pressed == ("SET_BUFIN_SELECT:" .. name), theme, ui.btns)
+        widgets.drawButton(mon, mainX + 9, y + 1, 3, 1, "OUT", "SET_BUFOUT_SELECT:" .. name, isBufOut or ui.pressed == ("SET_BUFOUT_SELECT:" .. name), theme, ui.btns)
+        widgets.drawButton(mon, mainX + 13, y + 1, 4, 1, "STOR", "SET_STORAGE:" .. name, isStorage or ui.pressed == ("SET_STORAGE:" .. name), theme, ui.btns)
+        
+        y = y + 3
     end
 end
 
