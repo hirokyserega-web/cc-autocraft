@@ -1,629 +1,283 @@
--- Monitor UI for cc-autocraft
--- Clean, tabbed interface: Dashboard / Storage / Recipes / Settings.
--- NOTE: ComputerCraft's font is ASCII-only; all on-screen text is English.
 local dispatcher = require("core.dispatcher")
 local storage = require("core.storage")
 local recipes = require("core.recipes")
 local util = require("lib.util")
+local widgets = require("ui.widgets")
 
 local ui = {
     tab = "DASH",
     modal = nil,
     btns = {},
+    pressed = nil,
     scroll = 0,
     recipe_scroll = 0,
     conf_scroll = 0
 }
 
--- Theme
-local C = {
-    bg       = colors.black,
-    header   = colors.gray,       -- Sleek dark grey header
-    tab_on   = colors.blue,       -- Strict corporate/industrial blue
-    tab_off  = colors.gray,       -- Gray for inactive tabs
-    panel    = colors.black,
-    border   = colors.gray,       -- Gray borders
-    title    = colors.lightBlue,  -- Light blue for group titles
-    text     = colors.white,
-    muted    = colors.lightGray,
-    ok       = colors.lime,
-    warn     = colors.yellow,
-    bad      = colors.red,
-    active   = colors.lightBlue,
-    accent   = colors.blue
+local theme = {
+    bg = colors.black,
+    sidebar = colors.gray,
+    surface = colors.black,
+    border = colors.gray,
+    
+    textBase = colors.white,
+    textMuted = colors.lightGray,
+    textActive = colors.black,
+    
+    accent = colors.lightBlue,
+    btnBase = colors.blue,
+    btnActive = colors.cyan,
+    btnPressed = colors.white,
+    
+    ok = colors.lime,
+    warn = colors.orange,
+    bad = colors.red,
+    
+    header = colors.gray
 }
 
-----------------------------------------------------------------------
--- Drawing primitives
-----------------------------------------------------------------------
-local function fill(mon, x, y, w, h, bg)
-    if not bg then return end
-    mon.setBackgroundColor(bg)
-    for i = 0, h - 1 do
-        mon.setCursorPos(x, y + i)
-        mon.write(string.rep(" ", w))
-    end
-end
-
-local function box(mon, x, y, w, h, bg, border)
-    fill(mon, x, y, w, h, bg)
-    if border then
-        mon.setBackgroundColor(border)
-        mon.setCursorPos(x, y);             mon.write(string.rep(" ", w))
-        mon.setCursorPos(x, y + h - 1);     mon.write(string.rep(" ", w))
-        for i = 0, h - 1 do
-            mon.setCursorPos(x, y + i);         mon.write(" ")
-            mon.setCursorPos(x + w - 1, y + i); mon.write(" ")
-        end
-    end
-end
-
-local function textAt(mon, x, y, s, fg, bg)
-    mon.setTextColor(fg or C.text)
-    mon.setBackgroundColor(bg or C.bg)
-    mon.setCursorPos(x, y)
-    mon.write(s)
-end
-
--- Draw a clickable button and register its hit rect.
-local function btn(mon, x, y, w, label, id, bg, fg, h)
-    h = h or 1
-    bg = bg or C.tab_on
-    fg = fg or colors.white
-
-    if h > 1 then
-        fill(mon, x, y, w, h, bg)
-    else
-        mon.setBackgroundColor(bg)
-        mon.setCursorPos(x, y)
-        mon.write(string.rep(" ", w))
-    end
-
-    mon.setTextColor(fg)
-    mon.setBackgroundColor(bg)
-    local textY = y + math.floor((h - 1) / 2)
-    mon.setCursorPos(x, textY)
-
-    local s = label
-    if #s < w then
-        local pad = math.floor((w - #s) / 2)
-        s = string.rep(" ", pad) .. s .. string.rep(" ", w - #s - pad)
-    elseif #s > w then
-        s = s:sub(1, w)
-    end
-    mon.write(s)
-    table.insert(ui.btns, { x1 = x, y1 = y, x2 = x + w - 1, y2 = y + h - 1, id = id })
-end
-
 local function cleanName(name)
-    if not name then return "" end
-    return name:match(":(.+)") or name
+    return util.cleanName(name)
 end
 
 local function shortName(name, n)
     return cleanName(name):sub(1, n or 16)
 end
 
--- Group ingredients by name, summing counts. Returns sorted list.
-local function groupIngredients(ingredients)
-    local grouped = {}
-    for _, ing in ipairs(ingredients) do
-        grouped[ing.name] = (grouped[ing.name] or 0) + (ing.count or 1)
-    end
-    local list = {}
-    for name, count in pairs(grouped) do
-        table.insert(list, { name = name, count = count })
-    end
-    table.sort(list, function(a, b) return a.name < b.name end)
-    return list
-end
-
--- Detect inventory role for a peripheral name.
-local function roleOf(name)
-    if name == _G.GRID_NAME then return "SCANNER" end
-    for _, w in pairs(dispatcher.workers) do
-        if w.buffers then
-            if w.buffers.input == name then return "BUF-IN" end
-            if w.buffers.output == name then return "BUF-OUT" end
-        end
-    end
-    return "STORAGE"
-end
-
-----------------------------------------------------------------------
--- Header + status bar
-----------------------------------------------------------------------
-local function drawHeader(mon, w)
-    fill(mon, 1, 1, w, 3, C.header)
-    textAt(mon, 2, 2, "CC-AUTOCRAFT 3.0", colors.white, C.header)
-
+local function drawSidebar(mon, w, h)
+    widgets.drawBox(mon, 1, 1, 10, h, theme.sidebar)
+    
     local tabs = {
         { id = "DASH",    text = "HOME" },
-        { id = "STORAGE", text = "STORAGE" },
-        { id = "RECIPE",  text = "RECIPES" },
-        { id = "CONF",    text = "SETTINGS" }
+        { id = "STORAGE", text = "ITEMS" },
+        { id = "RECIPE",  text = "CRAFT" },
+        { id = "CONF",    text = "CONF" }
     }
-    local tw = 11
-    local gap = 1
-    local totalW = #tabs * tw + (#tabs - 1) * gap
-    local startX = w - totalW - 1
+    
     for i, t in ipairs(tabs) do
-        local x = startX + (i - 1) * (tw + gap)
+        local y = 2 + (i - 1) * 4
+        local id = "TAB:" .. t.id
         local isActive = (ui.tab == t.id)
-        btn(mon, x, 1, tw, t.text, "TAB:" .. t.id,
-            isActive and C.tab_on or C.tab_off,
-            isActive and colors.white or colors.lightGray,
-            3)
+        local isPressed = (ui.pressed == id)
+        
+        local bg = isPressed and theme.btnPressed or (isActive and theme.btnActive or theme.btnBase)
+        widgets.drawButton(mon, 2, y, 8, 3, t.text, id, isActive or isPressed, theme, ui.btns)
     end
+    
+    local pingColor = theme.ok
+    if #dispatcher.queue > 10 then pingColor = theme.warn end
+    widgets.drawText(mon, 2, h - 1, "ONLINE", pingColor, theme.sidebar)
 end
 
-local function drawStatus(mon, w)
-    fill(mon, 1, 4, w, 1, colors.black)
-    local itemCount = 0
-    for _ in pairs(storage.cache) do itemCount = itemCount + 1 end
-    local workerCount = 0
-    for _ in pairs(dispatcher.workers) do workerCount = workerCount + 1 end
-    local pending = 0
-    for _, t in ipairs(dispatcher.queue) do
-        if t.status == "PENDING" or t.status == "ACTIVE" then pending = pending + 1 end
+local function drawHeader(mon, w, h)
+    local title = "SYSTEM"
+    if ui.tab == "DASH" then title = "DASHBOARD"
+    elseif ui.tab == "STORAGE" then title = "STORAGE"
+    elseif ui.tab == "RECIPE" then title = "RECIPES & CRAFTING"
+    elseif ui.tab == "CONF" then title = "SETTINGS"
     end
-
-    local scanner = _G.GRID_NAME and cleanName(_G.GRID_NAME) or "NONE"
-    local s = string.format(" Scanner: %-14s  Items: %d  Workers: %d  Queue: %d",
-        scanner:sub(1, 14), itemCount, workerCount, pending)
-    textAt(mon, 1, 4, s, C.muted, colors.black)
+    
+    widgets.drawBox(mon, 11, 1, w - 10, 3, theme.header)
+    widgets.drawText(mon, 13, 2, title, theme.textBase, theme.header)
+    
+    local wc = 0
+    for _ in pairs(dispatcher.workers) do wc = wc + 1 end
+    local status = string.format("Q:%d W:%d", #dispatcher.queue, wc)
+    widgets.drawText(mon, w - #status - 1, 2, status, theme.accent, theme.header)
 end
 
-----------------------------------------------------------------------
--- Tab: Dashboard
-----------------------------------------------------------------------
 local function drawDash(mon, w, h)
-    local leftW = math.max(20, math.floor(w * 0.42))
-    local leftX = 2
-    local rightX = leftX + leftW + 1
-
-    -- Workers panel
-    box(mon, leftX, 5, leftW, h - 5, C.panel, C.border)
-    textAt(mon, leftX + 1, 6, "WORKERS (TURTLES)", C.title, C.panel)
-
+    local mainX = 12
+    local mainW = w - 12
+    
+    local cardW = math.floor(mainW / 2) - 1
+    widgets.drawBox(mon, mainX, 5, cardW, h - 5, theme.surface, theme.border)
+    widgets.drawText(mon, mainX + 2, 6, "WORKERS", theme.accent, theme.surface)
+    
     local y = 8
-    local anyWorker = false
     for id, info in pairs(dispatcher.workers) do
-        anyWorker = true
-        local badgeText, badgeColor
-        if info.status == "IDLE" then
-            badgeText, badgeColor = " IDLE ", C.ok
-        elseif info.status == "CRAFTING" then
-            badgeText, badgeColor = " CRAFT ", C.active
-        elseif info.status == "TESTING" then
-            badgeText, badgeColor = " TEST  ", C.warn
-        else
-            badgeText, badgeColor = " ERR   ", C.bad
-        end
-        textAt(mon, leftX + 1, y, string.format("#%-3d:", id), C.text, C.panel)
-        textAt(mon, leftX + 10, y, badgeText, colors.black, badgeColor)
+        local col = theme.ok
+        if info.status == "CRAFTING" then col = theme.accent
+        elseif info.status ~= "IDLE" then col = theme.warn end
+        
+        widgets.drawText(mon, mainX + 2, y, string.format("#%-3s", id), theme.textBase, theme.surface)
+        widgets.drawText(mon, mainX + 7, y, info.status, col, theme.surface)
         y = y + 1
         if y > h - 2 then break end
     end
-    if not anyWorker then
-        textAt(mon, leftX + 1, 8, "No workers.", C.muted, C.panel)
-        textAt(mon, leftX + 1, 9, "Run worker.lua", C.muted, C.panel)
-        textAt(mon, leftX + 1, 10, "on turtles.", C.muted, C.panel)
-    end
 
-    -- Queue panel
-    if rightX < w then
-        local rw = w - rightX
-        box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
-        textAt(mon, rightX + 1, 6, "TASK QUEUE", C.title, C.panel)
-        btn(mon, w - 11, 6, 10, "CLEAR", "CLR_QUEUE", C.bad, colors.white)
+    local tasksX = mainX + cardW + 1
+    widgets.drawBox(mon, tasksX, 5, w - tasksX, h - 5, theme.surface, theme.border)
+    widgets.drawText(mon, tasksX + 2, 6, "ACTIVE QUEUE", theme.accent, theme.surface)
+    widgets.drawButton(mon, w - 8, 6, 6, 1, "CLR", "CLR_QUEUE", ui.pressed == "CLR_QUEUE", theme, ui.btns)
 
-        y = 8
-        for i = #dispatcher.queue, 1, -1 do
-            local t = dispatcher.queue[i]
-            local badgeText, bgCol, fgCol
-            if t.status == "COMPLETED" then
-                badgeText, bgCol, fgCol = " DONE ", colors.gray, colors.white
-            elseif t.status == "FAILED" then
-                badgeText, bgCol, fgCol = " FAIL ", colors.red, colors.white
-            elseif t.status == "ACTIVE" then
-                badgeText, bgCol, fgCol = " WORK ", colors.blue, colors.white
-            else
-                badgeText, bgCol, fgCol = " WAIT ", colors.lightGray, colors.black
-            end
-            
-            -- Print task info
-            local nameStr = string.format("%-11s x%d", shortName(t.name, 11), t.count)
-            textAt(mon, rightX + 1, y, nameStr, C.text, C.panel)
-            -- Print badge at the right side of the row
-            textAt(mon, w - 8, y, badgeText, fgCol, bgCol)
-            y = y + 1
-            if y > h - 2 then break end
-        end
-        if #dispatcher.queue == 0 then
-            textAt(mon, rightX + 1, 8, "Queue empty.", C.muted, C.panel)
-        end
+    y = 8
+    for i = #dispatcher.queue, 1, -1 do
+        local t = dispatcher.queue[i]
+        local col = theme.textMuted
+        if t.status == "ACTIVE" then col = theme.accent end
+        
+        widgets.drawText(mon, tasksX + 2, y, shortName(t.name, 12), col, theme.surface)
+        widgets.drawText(mon, w - 8, y, string.format("x%d", t.count), theme.textBase, theme.surface)
+        y = y + 1
+        if y > h - 2 then break end
     end
 end
 
-----------------------------------------------------------------------
--- Tab: Storage
-----------------------------------------------------------------------
 local function drawStorage(mon, w, h)
-    box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "STORAGE CONTENTS", C.title, C.panel)
-
-    btn(mon, w - 7, 6, 6, "/\\ UP", "SUP", C.tab_off, colors.black)
-    btn(mon, w - 7, h - 2, 6, "\\/ DN", "SDN", C.tab_off, colors.black)
-
-    textAt(mon, 4, 8, "Action   Item Name                      Qty", C.title, C.panel)
-    textAt(mon, 3, 9, string.rep("-", w - 14), C.border, C.panel)
-
+    local mainX = 12
+    local mainW = w - 12
+    widgets.drawBox(mon, mainX, 5, mainW, h - 5, theme.surface, theme.border)
+    
+    widgets.drawButton(mon, w - 8, 6, 3, 1, "^", "SUP", ui.pressed == "SUP", theme, ui.btns)
+    widgets.drawButton(mon, w - 4, 6, 3, 1, "v", "SDN", ui.pressed == "SDN", theme, ui.btns)
+    
     local items = {}
     for name, qty in pairs(storage.cache) do
         table.insert(items, { name = name, qty = qty })
     end
     table.sort(items, function(a, b) return a.name < b.name end)
-
-    local maxRows = h - 11
-    local y = 10
-    for i = ui.scroll + 1, math.min(#items, ui.scroll + maxRows) do
+    
+    local y = 7
+    local maxItems = h - 9
+    for i = ui.scroll + 1, math.min(#items, ui.scroll + maxItems) do
         local item = items[i]
         local hasRecipe = recipes.has(item.name)
-        btn(mon, 4, y, 7, "ORDER", "CRAFT_INIT:" .. item.name,
-            hasRecipe and C.tab_on or C.tab_off, colors.white)
-        textAt(mon, 13, y, shortName(item.name, 28), hasRecipe and C.ok or C.text, C.panel)
-        textAt(mon, 43, y, string.format("x%d", item.qty), colors.white, C.panel)
+        local cid = "CRAFT_INIT:" .. item.name
+        
+        widgets.drawText(mon, mainX + 2, y, shortName(item.name, 20), hasRecipe and theme.ok or theme.textBase, theme.surface)
+        widgets.drawText(mon, mainX + 24, y, string.format("x%d", item.qty), theme.textMuted, theme.surface)
+        
+        if hasRecipe then
+            widgets.drawButton(mon, w - 9, y, 7, 1, "ORDER", cid, ui.pressed == cid, theme, ui.btns)
+        end
         y = y + 1
     end
-
-    if #items == 0 then
-        textAt(mon, 4, 11, "Storage empty.", C.bad, C.panel)
-        textAt(mon, 4, 12, "Connect chests to wired network.", C.muted, C.panel)
-        if _G.GRID_NAME then
-            textAt(mon, 4, 14, "Scanner chest: " .. cleanName(_G.GRID_NAME), C.warn, C.panel)
-            textAt(mon, 4, 15, "(excluded from storage - normal)", C.muted, C.panel)
-        end
-    end
 end
 
-----------------------------------------------------------------------
--- Tab: Recipes
-----------------------------------------------------------------------
-local function drawSlot(mon, x, y, item)
-    if item then
-        local name = shortName(item.name, 3):upper()
-        if #name == 1 then name = " " .. name .. " "
-        elseif #name == 2 then name = " " .. name
-        end
-        textAt(mon, x, y, name, colors.white, colors.gray)
-    else
-        textAt(mon, x, y, "   ", colors.lightGray, colors.gray)
-    end
-end
-
-local function drawOutputSlot(mon, x, y, itemName)
-    if itemName then
-        local name = shortName(itemName, 3):upper()
-        if #name == 1 then name = " " .. name .. " "
-        elseif #name == 2 then name = " " .. name
-        end
-        textAt(mon, x, y, name, colors.black, colors.orange)
-    else
-        textAt(mon, x, y, " ? ", colors.gray, colors.lightGray)
-    end
-end
-
-local function drawGridPreview(mon, x, y)
-    local list = _G.GRID_ITEMS or {}
-    local outItem = _G.GRID_OUTPUT
-
-    -- positions of the 3x3 grid relative to (x,y)
-    local cells = {
-        { 4,  0, 0 }, { 5,  4, 0 }, { 6,  8, 0 },
-        { 13, 0, 2 }, { 14, 4, 2 }, { 15, 8, 2 },
-        { 22, 0, 4 }, { 23, 4, 4 }, { 24, 8, 4 }
-    }
-
-    for _, c in ipairs(cells) do
-        local slot, dx, dy = c[1], c[2], c[3]
-        local item = list[slot]
-        drawSlot(mon, x + dx, y + dy, item)
-    end
-
-    textAt(mon, x + 12, y + 2, "->", C.accent, C.panel)
-    drawOutputSlot(mon, x + 15, y + 2, outItem)
-end
-
-local function drawRecipe(mon, w, h)
-    local leftW = 28
-    local rightX = leftW + 3
-
-    -- Left: live grid + test button
-    box(mon, 2, 5, leftW, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "CRAFT GRID 3x3", C.title, C.panel)
-
+local function drawRecipes(mon, w, h)
+    local mainX = 12
+    local mainW = w - 12
+    
+    local leftW = 20
+    widgets.drawBox(mon, mainX, 5, leftW, h - 5, theme.surface, theme.border)
+    widgets.drawText(mon, mainX + 2, 6, "SCANNER", theme.accent, theme.surface)
+    
     if not _G.GRID_NAME then
-        textAt(mon, 3, 8, "No scanner chest selected.", C.bad, C.panel)
-        textAt(mon, 3, 9, "Open SETTINGS tab.", C.muted, C.panel)
-        return
+        widgets.drawText(mon, mainX + 2, 8, "NO SCANNER", theme.bad, theme.surface)
+    else
+        widgets.drawText(mon, mainX + 2, 8, shortName(_G.GRID_NAME, 16), theme.textMuted, theme.surface)
+        widgets.drawButton(mon, mainX + 2, 10, 16, 3, "TEST CRAFT", "TEST_CRAFT", ui.pressed == "TEST_CRAFT", theme, ui.btns)
     end
 
-    textAt(mon, 3, 8, "Scanner: " .. shortName(_G.GRID_NAME, 20), C.muted, C.panel)
-    drawGridPreview(mon, 4, 10)
-    textAt(mon, 4, 16, "Place craft in center", C.muted, C.panel)
-    textAt(mon, 4, 17, "slots 4-6 / 13-15 / 22-24", C.muted, C.panel)
+    local listX = mainX + leftW + 1
+    widgets.drawBox(mon, listX, 5, w - listX, h - 5, theme.surface, theme.border)
+    widgets.drawText(mon, listX + 2, 6, "RECIPES", theme.accent, theme.surface)
+    
+    widgets.drawButton(mon, w - 8, 6, 3, 1, "^", "RSUP", ui.pressed == "RSUP", theme, ui.btns)
+    widgets.drawButton(mon, w - 4, 6, 3, 1, "v", "RSDN", ui.pressed == "RSDN", theme, ui.btns)
 
-    local testLabel = _G.active_test and "TESTING..." or "TEST CRAFT"
-    btn(mon, 3, 19, leftW - 2, testLabel, "TEST_CRAFT",
-        _G.active_test and C.muted or C.tab_on, colors.white)
-
-    -- Right: saved recipes
-    if rightX < w then
-        local rw = w - rightX - 1
-        box(mon, rightX, 5, rw, h - 5, C.panel, C.border)
-        textAt(mon, rightX + 1, 6, "KNOWN RECIPES", C.title, C.panel)
-        btn(mon, w - 7, 6, 6, "/\\ UP", "RSUP", C.tab_off, colors.black)
-        btn(mon, w - 7, h - 2, 6, "\\/ DN", "RSDN", C.tab_off, colors.black)
-
-        local recs = recipes.list()
-        local maxRows = h - 9
-        local y = 8
-        for i = ui.recipe_scroll + 1, math.min(#recs, ui.recipe_scroll + maxRows) do
-            local r = recs[i]
-            btn(mon, rightX + 1, y, 7, "CRAFT", "REC_CRAFT:" .. r.name, C.tab_on, colors.white)
-            textAt(mon, rightX + 9, y, string.format("%-16s x%d", shortName(r.name, 16), r.output_count),
-                C.text, C.panel)
-            btn(mon, w - 4, y, 3, " X", "REC_DEL:" .. r.name, C.bad, colors.white)
-            y = y + 1
-        end
-
-        if #recs == 0 then
-            textAt(mon, rightX + 1, 8, "No recipes.", C.bad, C.panel)
-            textAt(mon, rightX + 1, 9, "Run TEST CRAFT", C.muted, C.panel)
-            textAt(mon, rightX + 1, 10, "and save the result.", C.muted, C.panel)
-        end
+    local recs = recipes.list()
+    local y = 8
+    for i = ui.recipe_scroll + 1, math.min(#recs, ui.recipe_scroll + (h - 10)) do
+        local r = recs[i]
+        local cid = "REC_CRAFT:" .. r.name
+        local did = "REC_DEL:" .. r.name
+        widgets.drawText(mon, listX + 2, y, shortName(r.name, 12), theme.textBase, theme.surface)
+        widgets.drawButton(mon, w - 12, y, 6, 1, "CRAFT", cid, ui.pressed == cid, theme, ui.btns)
+        widgets.drawButton(mon, w - 4, y, 2, 1, "X", did, ui.pressed == did, theme, ui.btns)
+        y = y + 1
     end
 end
 
-----------------------------------------------------------------------
--- Tab: Settings
-----------------------------------------------------------------------
-local function drawConf(mon, w, h)
-    box(mon, 2, 5, w - 9, h - 5, C.panel, C.border)
-    textAt(mon, 3, 6, "SCANNER CHEST SELECT", C.title, C.panel)
-    textAt(mon, 3, 7, "(used to record recipes; excluded from storage)", C.muted, C.panel)
-
-    btn(mon, w - 7, 6, 6, "/\\ UP", "CSUP", C.tab_off, colors.black)
-    btn(mon, w - 7, h - 2, 6, "\\/ DN", "CSDN", C.tab_off, colors.black)
-
-    textAt(mon, 4, 9, "Action Buttons            Inventory Name   Assigned Role", C.title, C.panel)
-    textAt(mon, 3, 10, string.rep("-", w - 14), C.border, C.panel)
+local function drawSettings(mon, w, h)
+    local mainX = 12
+    local mainW = w - 12
+    widgets.drawBox(mon, mainX, 5, mainW, h - 5, theme.surface, theme.border)
+    
+    widgets.drawButton(mon, w - 8, 6, 3, 1, "^", "CSUP", ui.pressed == "CSUP", theme, ui.btns)
+    widgets.drawButton(mon, w - 4, 6, 3, 1, "v", "CSDN", ui.pressed == "CSDN", theme, ui.btns)
 
     local invs = _G.NETWORK_INVENTORIES or {}
-    table.sort(invs)
-
-    local maxRows = h - 12
-    local y = 11
-    for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + maxRows) do
+    local y = 7
+    for i = ui.conf_scroll + 1, math.min(#invs, ui.conf_scroll + (h - 9)) do
         local name = invs[i]
-        local role = roleOf(name)
-        local isScanner = (name == _G.GRID_NAME)
-        local isBufIn, isBufOut = false, false
-        local assignedWorkerId = nil
-        for wid, w in pairs(dispatcher.workers) do
-            if w.buffers then
-                if w.buffers.input == name then
-                    isBufIn = true
-                    assignedWorkerId = wid
-                elseif w.buffers.output == name then
-                    isBufOut = true
-                    assignedWorkerId = wid
-                end
-            end
-        end
-
-        btn(mon, 4, y, 6, "SCAN", "SET_GRID:" .. name, isScanner and C.ok or C.tab_off, isScanner and colors.black or colors.white)
-        btn(mon, 11, y, 4, "IN", "SET_BUFIN_SELECT:" .. name, isBufIn and C.active or C.tab_off, isBufIn and colors.black or colors.white)
-        btn(mon, 16, y, 5, "OUT", "SET_BUFOUT_SELECT:" .. name, isBufOut and C.active or C.tab_off, isBufOut and colors.black or colors.white)
+        local isScanner = (_G.GRID_NAME == name)
+        local gid = "SET_GRID:" .. name
+        local sid = "SET_STORAGE:" .. name
         
-        local isStorage = (role == "STORAGE")
-        btn(mon, 22, y, 5, "STOR", "SET_STORAGE:" .. name, isStorage and C.tab_on or C.tab_off, isStorage and colors.white or colors.lightGray)
-
-        local statusLabel = ""
-        local statusColor = C.muted
-        if isScanner then
-            statusLabel = "[SCANNER]"
-            statusColor = C.ok
-        elseif isBufIn then
-            statusLabel = string.format("[IN #%d]", assignedWorkerId)
-            statusColor = C.active
-        elseif isBufOut then
-            statusLabel = string.format("[OUT #%d]", assignedWorkerId)
-            statusColor = C.active
-        else
-            statusLabel = "[STORAGE]"
-            statusColor = C.muted
-        end
-
-        textAt(mon, 28, y, shortName(name, 12), C.text, C.panel)
-        textAt(mon, 41, y, statusLabel, statusColor, C.panel)
-
+        widgets.drawText(mon, mainX + 2, y, shortName(name, 16), theme.textBase, theme.surface)
+        widgets.drawButton(mon, w - 15, y, 6, 1, "SCAN", gid, isScanner or ui.pressed == gid, theme, ui.btns)
+        widgets.drawButton(mon, w - 7, y, 5, 1, "STOR", sid, (not isScanner) or ui.pressed == sid, theme, ui.btns)
         y = y + 1
-        if y > h - 3 then break end
-    end
-
-    if #invs == 0 then
-        textAt(mon, 4, 11, "No inventories found!", C.bad, C.panel)
-        textAt(mon, 4, 12, "Connect chests to Core's wired network.", C.muted, C.panel)
     end
 end
 
-----------------------------------------------------------------------
--- Modals
-----------------------------------------------------------------------
-local function drawCraftModal(mon, w, h)
-    local mw, mh = math.min(52, w - 4), math.min(20, h - 4)
-    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
-
-    local options = recipes.get(ui.modal.name)
-    local recipe = options and options[1]
-    local outCount = recipe and recipe.output_count or 1
-    local batches = math.ceil(ui.modal.count / outCount)
-    local totalOutput = batches * outCount
-
-    box(mon, mx, my, mw, mh, C.bg, C.tab_on)
-    textAt(mon, mx + 2, my + 1, "AUTOCRAFT ORDER", C.title, C.bg)
-    textAt(mon, mx + 2, my + 3, "Item: " .. shortName(ui.modal.name, mw - 7), C.text, C.bg)
-    textAt(mon, mx + 2, my + 4,
-        string.format("Recipe out: x%d  ->  will craft: x%d", outCount, totalOutput),
-        C.muted, C.bg)
-
-    textAt(mon, mx + 2, my + 6, "Amount: ", C.text, C.bg)
-    textAt(mon, mx + 11, my + 6, tostring(ui.modal.count), C.title, C.bg)
-
-    btn(mon, mx + 2,  my + 8, 5, "-1",  "DEC:1",  C.tab_off, colors.white)
-    btn(mon, mx + 8,  my + 8, 5, "-10", "DEC:10", C.tab_off, colors.white)
-    btn(mon, mx + 14, my + 8, 5, "-64", "DEC:64", C.tab_off, colors.white)
-    btn(mon, mx + mw - 19, my + 8, 5, "+1",  "INC:1",  C.tab_off, colors.white)
-    btn(mon, mx + mw - 13, my + 8, 5, "+10", "INC:10", C.tab_off, colors.white)
-    btn(mon, mx + mw - 7,  my + 8, 5, "+64", "INC:64", C.tab_off, colors.white)
-
-    textAt(mon, mx + 2, my + 10, "Ingredients (have / need):", C.muted, C.bg)
-
-    -- Feasibility summary line (can the whole craft, incl. sub-recipes, be done?)
-    if ui.modal.feasible_ok ~= nil then
-        local fmsg = ui.modal.feasible_ok and "Craftable: YES" or ("Cannot: " .. tostring(ui.modal.feasible_msg))
-        textAt(mon, mx + 2, my + mh - 5, fmsg:sub(1, mw - 4),
-            ui.modal.feasible_ok and C.ok or C.warn, C.bg)
-    end
-
-    if recipe then
-        local grouped = groupIngredients(recipe.ingredients)
-        local iy = my + 11
-        for _, ing in ipairs(grouped) do
-            local needed = ing.count * batches
-            local avail = storage.getAvailable(ing.name)
-            local color = (avail >= needed) and C.ok or C.bad
-            textAt(mon, mx + 2, iy,
-                string.format("- %-20s : %d / %d", shortName(ing.name, 20), avail, needed),
-                color, C.bg)
-            iy = iy + 1
-            if iy > my + mh - 6 then break end
-        end
-    else
-        textAt(mon, mx + 2, my + 11, "Recipe not found! Save it via TEST CRAFT.", C.bad, C.bg)
-    end
-
-    if ui.modal.error then
-        textAt(mon, mx + 2, my + mh - 3, ui.modal.error:sub(1, mw - 4), C.bad, C.bg)
-    end
-
-    btn(mon, mx + 2, my + mh - 2, 18, "START CRAFT", "CRAFT_OK", C.ok, colors.white)
-    btn(mon, mx + mw - 14, my + mh - 2, 12, "CANCEL", "CRAFT_CANCEL", C.tab_off, colors.white)
-end
-
-local function drawRecipeSuccessModal(mon, w, h)
-    local mw, mh = 48, 14
-    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
-    box(mon, mx, my, mw, mh, C.bg, C.ok)
-
-    textAt(mon, mx + 2, my + 2, "TEST CRAFT SUCCESS!", C.ok, C.bg)
-    textAt(mon, mx + 2, my + 4,
-        "Got: " .. shortName(ui.modal.data.output.name, 24) .. " x" .. ui.modal.data.output.count,
-        C.text, C.bg)
-    textAt(mon, mx + 2, my + 6, "Ingredients recognized.", C.muted, C.bg)
-    textAt(mon, mx + 2, my + 7, "Result in scanner slot 16.", C.muted, C.bg)
-    textAt(mon, mx + 2, my + 9, "Save recipe to database?", C.text, C.bg)
-
-    btn(mon, mx + 2, my + mh - 2, 18, "SAVE", "SAVE_OK", C.ok, colors.white)
-    btn(mon, mx + mw - 14, my + mh - 2, 12, "CANCEL", "SAVE_CANCEL", C.tab_off, colors.white)
-end
-
-local function drawRecipeFailModal(mon, w, h)
-    local mw, mh = 48, 12
-    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
-    box(mon, mx, my, mw, mh, C.bg, C.bad)
-
-    textAt(mon, mx + 2, my + 2, "TEST CRAFT ERROR", C.bad, C.bg)
-    textAt(mon, mx + 2, my + 5, "Reason: " .. tostring(ui.modal.error):sub(1, mw - 9), C.text, C.bg)
-    btn(mon, mx + math.floor((mw - 12) / 2), my + mh - 2, 12, "CLOSE", "ERR_CLOSE", C.bad, colors.white)
-end
-
-local function drawSelectWorkerModal(mon, w, h)
-    local mw, mh = 40, 12
-    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
-    box(mon, mx, my, mw, mh, C.bg, C.tab_on)
-
+local function drawSelectWorkerModal(mon, mx, my, mw, mh)
     local modeText = (ui.modal.mode == "IN") and "INPUT" or "OUTPUT"
-    textAt(mon, mx + 2, my + 2, "SELECT WORKER FOR " .. modeText, C.title, C.bg)
-    textAt(mon, mx + 2, my + 4, "Chest: " .. shortName(ui.modal.chest, 24), C.text, C.bg)
+    widgets.drawText(mon, mx + 2, my + 2, "LINK WORKER (" .. modeText .. ")", theme.accent, theme.surface)
+    widgets.drawText(mon, mx + 2, my + 4, "Chest: " .. shortName(ui.modal.chest, 20), theme.textMuted, theme.surface)
 
     local ids = {}
-    for id in pairs(dispatcher.workers) do
-        table.insert(ids, id)
-    end
+    for id in pairs(dispatcher.workers) do table.insert(ids, id) end
     table.sort(ids)
 
     local y = my + 6
     for _, id in ipairs(ids) do
-        btn(mon, mx + 4, y, 14, "Worker #" .. id,
-            string.format("SET_WORKER_BUF:%s|%s|%s", ui.modal.mode, ui.modal.chest, id),
-            C.tab_on, colors.white)
-        y = y + 2
+        local bid = string.format("SET_WORKER_BUF:%s|%s|%s", ui.modal.mode, ui.modal.chest, id)
+        widgets.drawButton(mon, mx + 2, y, 16, 1, "Worker #" .. id, bid, ui.pressed == bid, theme, ui.btns)
+        y = y + 1
         if y > my + mh - 3 then break end
     end
-
-    if #ids == 0 then
-        textAt(mon, mx + 4, my + 6, "No workers online.", C.bad, C.bg)
-    end
-
-    btn(mon, mx + mw - 12, my + mh - 2, 10, "CANCEL", "MODAL_CANCEL", C.tab_off, colors.white)
+    widgets.drawButton(mon, mx + mw - 12, my + mh - 2, 10, 1, "CANCEL", "MODAL_CANCEL", ui.pressed == "MODAL_CANCEL", theme, ui.btns)
 end
 
 local function drawModal(mon, w, h)
     if not ui.modal then return end
+    local mw, mh = 40, 15
+    local mx, my = math.floor((w - mw) / 2), math.floor((h - mh) / 2)
+    widgets.drawBox(mon, mx, my, mw, mh, theme.surface, theme.accent)
+    
     if ui.modal.type == "CRAFT" then
-        drawCraftModal(mon, w, h)
+        widgets.drawText(mon, mx + 2, my + 2, "CRAFT: " .. shortName(ui.modal.name, 20), theme.accent, theme.surface)
+        widgets.drawText(mon, mx + 2, my + 4, "QTY: " .. ui.modal.count, theme.textBase, theme.surface)
+        widgets.drawButton(mon, mx + 2, my + 6, 5, 3, "-1", "DEC:1", ui.pressed == "DEC:1", theme, ui.btns)
+        widgets.drawButton(mon, mx + 8, my + 6, 5, 3, "+1", "INC:1", ui.pressed == "INC:1", theme, ui.btns)
+        widgets.drawButton(mon, mx + 14, my + 6, 6, 3, "+64", "INC:64", ui.pressed == "INC:64", theme, ui.btns)
+        widgets.drawButton(mon, mx + 2, my + 11, 15, 2, "START", "CRAFT_OK", ui.pressed == "CRAFT_OK", theme, ui.btns)
+        widgets.drawButton(mon, mx + 20, my + 11, 15, 2, "CANCEL", "CRAFT_CANCEL", ui.pressed == "CRAFT_CANCEL", theme, ui.btns)
     elseif ui.modal.type == "RECIPE_SUCCESS" then
-        drawRecipeSuccessModal(mon, w, h)
+        widgets.drawText(mon, mx + 2, my + 2, "RECIPE CAPTURED", theme.ok, theme.surface)
+        widgets.drawText(mon, mx + 2, my + 4, "Item: " .. ui.modal.data.output.name, theme.textBase, theme.surface)
+        widgets.drawButton(mon, mx + 2, my + 10, 15, 2, "SAVE", "SAVE_OK", ui.pressed == "SAVE_OK", theme, ui.btns)
+        widgets.drawButton(mon, mx + 20, my + 10, 15, 2, "CANCEL", "SAVE_CANCEL", ui.pressed == "SAVE_CANCEL", theme, ui.btns)
     elseif ui.modal.type == "RECIPE_FAILED" then
-        drawRecipeFailModal(mon, w, h)
+        widgets.drawText(mon, mx + 2, my + 2, "ERROR", theme.bad, theme.surface)
+        widgets.drawText(mon, mx + 2, my + 5, tostring(ui.modal.error), theme.textBase, theme.surface)
+        widgets.drawButton(mon, mx + 10, my + 10, 20, 2, "CLOSE", "ERR_CLOSE", ui.pressed == "ERR_CLOSE", theme, ui.btns)
     elseif ui.modal.type == "SELECT_WORKER" then
-        drawSelectWorkerModal(mon, w, h)
+        drawSelectWorkerModal(mon, mx, my, mw, mh)
     end
 end
 
-----------------------------------------------------------------------
--- Main draw
-----------------------------------------------------------------------
 function ui.draw(monName)
     local mon = peripheral.wrap(monName)
     if not mon then return end
     ui.btns = {}
     local w, h = mon.getSize()
-
-    fill(mon, 1, 1, w, h, C.bg)
-    drawHeader(mon, w)
-    drawStatus(mon, w)
-
-    if ui.modal then
-        drawModal(mon, w, h)
-        return
-    end
-
-    if ui.tab == "DASH" then
-        drawDash(mon, w, h)
-    elseif ui.tab == "STORAGE" then
-        drawStorage(mon, w, h)
-    elseif ui.tab == "RECIPE" then
-        drawRecipe(mon, w, h)
-    elseif ui.tab == "CONF" then
-        drawConf(mon, w, h)
+    widgets.drawBox(mon, 1, 1, w, h, theme.bg)
+    drawSidebar(mon, w, h)
+    drawHeader(mon, w, h)
+    if ui.modal then drawModal(mon, w, h)
+    else
+        if ui.tab == "DASH" then drawDash(mon, w, h)
+        elseif ui.tab == "STORAGE" then drawStorage(mon, w, h)
+        elseif ui.tab == "RECIPE" then drawRecipes(mon, w, h)
+        elseif ui.tab == "CONF" then drawSettings(mon, w, h)
+        end
     end
 end
 
--- Reverse-order hit test so modal buttons (drawn last) win over background.
 function ui.touch(x, y)
     for i = #ui.btns, 1, -1 do
         local b = ui.btns[i]

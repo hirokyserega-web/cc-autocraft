@@ -19,7 +19,7 @@ end
 local files = {
     "lib/util.lua", "lib/net.lua", "lib/itemmatch.lua", "lib/lang.lua",
     "core/storage.lua", "core/recipes.lua", "core/planner.lua", "core/dispatcher.lua",
-    "core/server.lua", "worker/worker.lua", "ui/monitor.lua", "config.lua", "main.lua"
+    "core/server.lua", "worker/worker.lua", "ui/monitor.lua", "ui/widgets.lua", "config.lua", "main.lua"
 }
 
 print("Cleaning system...")
