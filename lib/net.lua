@@ -4,6 +4,14 @@ local net = {}
 net.PROTOCOL = "cc_autocraft"
 net.VERSION = "1.0"
 
+function net.open()
+    for _, side in ipairs(redstone.getSides()) do
+        if peripheral.getType(side) == "modem" then
+            rednet.open(side)
+        end
+    end
+end
+
 function net.send(id, msgType, data)
     local packet = {
         protocol = net.PROTOCOL,

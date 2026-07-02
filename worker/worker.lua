@@ -12,13 +12,11 @@ local slot_map = {
     [22] = 9,  [23] = 10, [24] = 11
 }
 
-local function opposite_side(side)
-    local opp = {
-        down = "up", up = "down",
-        front = "back", back = "front",
-        left = "right", right = "left"
-    }
-    return opp[side] or "up"
+local function turtleNetworkName()
+    if type(peripheral.getNameLocal) == "function" then
+        return peripheral.getNameLocal()
+    end
+    return nil
 end
 
 -- Robust inventory detection on a side (works on every CC:T version).
@@ -117,33 +115,44 @@ function worker.loop()
                     })
                 end
             else
-                local turtle_name = (type(peripheral.getNameLocal) == "function" and peripheral.getNameLocal()) or opposite_side(input_side)
-                local target_output_name = (type(peripheral.getNameLocal) == "function" and peripheral.getNameLocal()) or opposite_side(output_side)
+                local turtle_name = turtleNetworkName()
+                if turtle_name == nil then
+                    local errMsg = "No wired-network name. Put an ACTIVE wired modem on the turtle and cable it to the buffer chests."
+                    print(errMsg)
+                    if worker.core_id then
+                        net.send(worker.core_id, "RESULT", {
+                            task_id = data.id,
+                            success = false,
+                            error = errMsg
+                        })
+                    end
+                    worker.status = "IDLE"
+                else
+                    -- 1. Clear turtle inventory into the output chest.
+                    push_all_to_output(output, turtle_name)
 
-                -- 1. Clear turtle inventory into the output chest.
-                push_all_to_output(output, target_output_name)
+                    -- 2. Pull ingredients from the input chest's central 3x3 into
+                    --    the turtle's craft grid, `batches` items per cell.
+                    local batches = data.batches or 1
+                    for chest_slot, turtle_slot in pairs(slot_map) do
+                        input.pushItems(turtle_name, chest_slot, batches, turtle_slot)
+                    end
 
-                -- 2. Pull ingredients from the input chest's central 3x3 into
-                --    the turtle's craft grid, `batches` items per cell.
-                local batches = data.batches or 1
-                for chest_slot, turtle_slot in pairs(slot_map) do
-                    input.pushItems(turtle_name, chest_slot, batches, turtle_slot)
-                end
+                    -- 3. Craft.
+                    print("Running turtle.craft()...")
+                    local success, err = turtle.craft()
 
-                -- 3. Craft.
-                print("Running turtle.craft()...")
-                local success, err = turtle.craft()
+                    -- 4. Push everything (result + leftovers) to the output chest.
+                    push_all_to_output(output, turtle_name)
 
-                -- 4. Push everything (result + leftovers) to the output chest.
-                push_all_to_output(output, target_output_name)
-
-                print("Finish: success=" .. tostring(success) .. (err and (", err=" .. err) or ""))
-                if worker.core_id then
-                    net.send(worker.core_id, "RESULT", {
-                        task_id = data.id,
-                        success = success,
-                        error = err
-                    })
+                    print("Finish: success=" .. tostring(success) .. (err and (", err=" .. err) or ""))
+                    if worker.core_id then
+                        net.send(worker.core_id, "RESULT", {
+                            task_id = data.id,
+                            success = success,
+                            error = err
+                        })
+                    end
                 end
             end
 
